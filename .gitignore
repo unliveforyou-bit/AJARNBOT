@@ -1,0 +1,7 @@
+# ไม่ commit ข้อมูล runtime และ secrets
+.env
+data/
+__pycache__/
+*.pyc
+*.pyo
+*.log
