@@ -1,0 +1,250 @@
+# 🎙️ VoiceLog Bot
+
+**Discord bot สำหรับ log กิจกรรม Voice Channel พร้อม Web Dashboard**  
+Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไม่ต้องเปิดคอมทิ้งไว้
+
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)
+![discord.py](https://img.shields.io/badge/discord.py-2.3+-5865F2?style=flat&logo=discord&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3.0+-000000?style=flat&logo=flask&logoColor=white)
+![Railway](https://img.shields.io/badge/Deploy-Railway-0B0D0E?style=flat&logo=railway&logoColor=white)
+
+---
+
+## ✨ Features
+
+### 🔊 Voice Channel Tracking
+- แจ้งเตือนเมื่อมีคนเข้า / ออก / ย้ายห้อง Voice
+- แจ้งเตือน mute, deaf, stream, กล้อง แยกต่างหาก
+- ตรวจจับ **anti-spam**: เตือนเมื่อมีคนเข้า-ออกถี่เกิน 5 ครั้ง/นาที
+- รองรับหลาย Discord Server พร้อมกัน (Multi-guild)
+
+### 📊 Leaderboard & Stats
+| Command | คำอธิบาย |
+|---------|----------|
+| `/rank` | อันดับ Voice สัปดาห์นี้ |
+| `/rank วันนี้` | อันดับเฉพาะวันนี้ |
+| `/rank สัปดาห์นี้` | อันดับ 7 วันล่าสุด |
+| `/rank เดือนนี้` | อันดับเดือนนี้ |
+| `!rank [today\|week\|month]` | prefix command เดียวกัน |
+
+### 🎭 มุข & Trivia
+| Command | คำอธิบาย |
+|---------|----------|
+| `/joke` | รับมุขสุ่ม พร้อม 👍👎 vote |
+| `/trivia` | รับคำถาม มีเวลา 30 วินาทีตอบ |
+| `/trivia-rank` | อันดับคะแนน Trivia |
+
+- มุขที่โดน 👎 เกินกำหนด → ถูกกรองออกอัตโนมัติ
+- ส่งมุข/Trivia อัตโนมัติทุก 30 นาที (ปรับได้)
+- เพิ่ม/แก้มุขได้ที่ไฟล์ `jokes.txt` และ `trivia.txt`
+
+### 🌐 Web Dashboard
+- ดูสถานะ bot, uptime, event counts แบบ real-time
+- ดู leaderboard, voice activity heatmap, session history
+- ดู profile ส่วนตัวของแต่ละ member
+- ตั้งค่า channel routing, toggle announcements ได้ทุก feature
+- **Dark / Light mode** toggle (persist ใน localStorage)
+- รองรับ **PWA** — กด "Add to Home Screen" บนมือถือได้
+- Log viewer แสดง bot log ล่าสุด 100 บรรทัด (auto-refresh 30s)
+
+### 🔒 Security
+- Session-based login (username: `admin`, password จาก env var)
+- **API Key** support — ส่ง `X-API-Key` header สำหรับ external access
+- Rate limiting บน commands (30 วินาที cooldown)
+
+### ⚙️ System
+- `/health` endpoint สำหรับ uptime monitoring (UptimeRobot, BetterStack)
+- Outbound Webhook — ส่ง event join/leave/move ไปยัง external URL (n8n, Make, Zapier)
+- Auto-purge session history เก่ากว่า 90 วัน ทุกวันจันทร์
+- Daily backup สรุปสถิติไปยัง Discord ทุกเที่ยงคืน
+- Bot status rotation ทุก 30 นาที (voice count / uptime / top user)
+- Graceful data save ทุกครั้งที่มีการเปลี่ยนแปลง
+
+---
+
+## 🚀 Deploy บน Railway
+
+### 1. Fork หรือ Clone repo นี้
+
+```bash
+git clone https://github.com/unliveforyou-bit/voicebot-railway.git
+cd voicebot-railway
+```
+
+### 2. สร้างโปรเจกต์บน Railway
+
+1. ไปที่ [railway.app](https://railway.app) → New Project → GitHub Repository
+2. เลือก repo นี้
+3. Railway จะ detect `Procfile` และ deploy อัตโนมัติ
+
+### 3. ตั้งค่า Environment Variables
+
+ไปที่ **Service → Variables** แล้วเพิ่ม:
+
+| Variable | จำเป็น | คำอธิบาย |
+|----------|--------|----------|
+| `DISCORD_TOKEN` | ✅ | Bot token จาก [Discord Developer Portal](https://discord.com/developers) |
+| `VOICE_LOG_CHANNEL_ID` | ✅ | Channel ID สำหรับส่ง log |
+| `DASHBOARD_PASSWORD` | แนะนำ | Password เข้า web dashboard |
+| `DASHBOARD_API_KEY` | ไม่บังคับ | API Key สำหรับ external access |
+| `OUTBOUND_WEBHOOK_URL` | ไม่บังคับ | URL รับ event join/leave (n8n, Make ฯลฯ) |
+
+### 4. เปิด Bot Intents
+
+ไปที่ Discord Developer Portal → Bot → เปิด:
+- ✅ Server Members Intent
+- ✅ Message Content Intent
+- ✅ Presence Intent
+
+### 5. เชิญ Bot เข้า Server
+
+ไปที่ OAuth2 → URL Generator:
+- Scopes: `bot`, `applications.commands`
+- Permissions: `Send Messages`, `Read Message History`, `Add Reactions`, `Connect`, `Speak`
+
+---
+
+## 📁 โครงสร้างไฟล์
+
+```
+voicebot-railway/
+├── voice_bot.py       # Bot หลัก + Flask dashboard
+├── jokes.txt          # ไฟล์มุข (แก้เพิ่มได้เลย)
+├── trivia.txt         # ไฟล์คำถาม Trivia
+├── requirements.txt   # Python dependencies
+├── Procfile           # Railway start command
+├── .env.example       # ตัวอย่าง environment variables
+└── data/              # ข้อมูล runtime (gitignored)
+    ├── voice_stats.json
+    ├── session_history.json
+    ├── hourly_activity.json
+    ├── joke_votes.json
+    ├── trivia_scores.json
+    └── bot_config.json
+```
+
+---
+
+## ✏️ แก้มุขและ Trivia
+
+**jokes.txt** — บรรทัดละมุข จัดหมวดด้วย `# [ชื่อหมวด]`
+```
+# [มุขทั่วไป]
+ทำไมโปรแกรมเมอร์ถึงชอบ dark mode? เพราะ light attracts bugs
+# [มุขถามตอบ]
+ทำไมปลาถึงไม่เล่น Facebook? เพราะกลัวติดแหอินเทอร์เน็ต
+```
+> มุขที่มี `?` จะแยกเป็น 2 ข้อความอัตโนมัติ (setup + punchline)
+
+**trivia.txt** — รูปแบบ `คำถาม|คำตอบ`
+```
+เมืองหลวงของญี่ปุ่นคือที่ไหน|โตเกียว
+Python ถูกสร้างโดยใคร|Guido van Rossum
+```
+
+แก้ไขได้โดยตรงบน GitHub → กดปุ่ม ✏️ → Commit → Railway deploy อัตโนมัติ
+
+---
+
+## 📡 API Endpoints
+
+| Endpoint | Auth | คำอธิบาย |
+|----------|------|----------|
+| `GET /health` | ไม่ต้อง | Bot health check สำหรับ uptime monitor |
+| `GET /api/status` | ✅ | สถานะ bot, voice users, leaderboard |
+| `GET /api/logs` | ✅ | Log ล่าสุด 100 บรรทัด |
+| `GET /api/heatmap` | ✅ | Voice activity รายชั่วโมง |
+| `GET /api/history` | ✅ | Session history ล่าสุด |
+| `GET /api/guilds` | ✅ | รายชื่อ Discord servers |
+| `GET /api/stats/<period>` | ✅ | Stats ตาม period: today/week/month |
+| `GET /api/trivia-scores` | ✅ | คะแนน Trivia แยกต่อ guild |
+| `POST /api/action/joke` | ✅ | ส่งมุขทันที |
+| `POST /api/action/trivia` | ✅ | ส่ง Trivia ทันที |
+| `POST /api/action/rank` | ✅ | ส่ง leaderboard ทันที |
+
+**Auth:** Login ผ่าน `/login` หรือส่ง header `X-API-Key: <your-key>`
+
+---
+
+## 📦 Dependencies
+
+```
+discord.py>=2.3.0
+flask>=3.0.0
+tzdata>=2024.1
+```
+
+ไม่มี dependency ภายนอกอื่นนอกจากนี้ — ใช้ Python stdlib ทั้งหมด
+
+---
+
+## 📋 Changelog
+
+### v1.0.0 — Initial Release
+> `33c04f5` · Railway-ready deployment
+
+- Voice join/leave/move/mute/deaf/stream/video tracking
+- Leaderboard (`!rank`) และสถิติรายสัปดาห์
+- ระบบมุขพร้อม 👍👎 voting และ auto-filter
+- Trivia ถาม-ตอบอัตโนมัติ
+- Web dashboard (Flask) พร้อม heatmap, session history, profile
+- Voice activity heatmap รายชั่วโมง
+- Weekly summary อัตโนมัติ
+- Channel routing ตั้งค่าได้
+- Basic auth สำหรับ dashboard
+
+### v1.1.0 — Cloud Features
+> `fd66dfc` · Slash commands, Session auth, Rate limiting
+
+- ✨ Slash commands: `/rank`, `/joke`, `/trivia`
+- 🔒 Session-based login/logout แทน Basic auth
+- ⏱️ Rate limiting บน commands (30s cooldown)
+- 💾 Railway Volume support (`RAILWAY_VOLUME_MOUNT_PATH`)
+- 📤 Daily backup สรุปสถิติไปยัง Discord ทุกเที่ยงคืน
+
+### v1.2.0 — Multi-guild & Trivia Scoring
+> `9f2aba1` · Multi-guild, Anti-spam, PWA
+
+- 🌐 **Multi-guild support** — รองรับหลาย server พร้อมกัน
+- 🚫 Anti-spam detection — เตือนเมื่อ join/leave ถี่เกินไป
+- 📅 Time-range leaderboard — `/rank วันนี้/สัปดาห์/เดือน`
+- 🏆 Trivia scoring system — ตอบถูก +1 คะแนน, `/trivia-rank`
+- 🔄 Bot status rotation ทุก 30 นาที
+- 📱 PWA support — Add to Home Screen บนมือถือได้
+
+### v1.3.0 — Monitoring & Integrations
+> `66edae2` · Health endpoint, Webhooks, Dark mode
+
+- 💚 `/health` endpoint สำหรับ UptimeRobot / BetterStack
+- 🔗 Outbound Webhook ส่ง event ไปยัง n8n, Make, Zapier
+- 🗑️ Auto-purge sessions เก่ากว่า 90 วัน อัตโนมัติ
+- 🌙 Dark / Light mode toggle บน dashboard
+
+### v1.4.0 — API & Developer Tools
+> `dba8f92` · API Key auth, Log viewer
+
+- 🔑 **API Key authentication** — `X-API-Key` header สำหรับ external access
+- 📋 **Log viewer** บน dashboard — ดู bot log ล่าสุด 100 บรรทัด real-time
+- 🔍 `/api/apikey` endpoint ตรวจสอบสถานะ API key
+
+---
+
+## 🤝 Contributing
+
+1. Fork repo นี้
+2. สร้าง branch ใหม่: `git checkout -b feature/your-feature`
+3. Commit: `git commit -m "feat: add your feature"`
+4. Push: `git push origin feature/your-feature`
+5. เปิด Pull Request
+
+---
+
+## 📄 License
+
+MIT License — ใช้ได้เสรี ดัดแปลงได้ แต่ขอให้ credit ด้วย
+
+---
+
+<div align="center">
+Made with ❤️ · Deployed on Railway · Built with discord.py + Flask
+</div>
