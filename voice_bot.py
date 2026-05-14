@@ -8,7 +8,7 @@ from discord.ext import tasks
 from discord.ext import commands as _commands
 from discord import app_commands
 import random, os, sys, asyncio, threading, json, secrets
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session
 from functools import wraps
@@ -33,6 +33,7 @@ HOURLY_FILE  = os.path.join(DATA_DIR, 'hourly_activity.json')
 HISTORY_FILE = os.path.join(DATA_DIR, 'session_history.json')
 VOTES_FILE   = os.path.join(DATA_DIR, 'joke_votes.json')
 LOG_FILE     = os.path.join(DATA_DIR, 'bot.log')
+TRIVIA_SCORES_FILE = os.path.join(DATA_DIR, 'trivia_scores.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 # =================
 
@@ -99,9 +100,9 @@ def load_trivia():
     return []
 # ==========================
 
-# ===== Voice Stats =====
-voice_join_times = {}
-weekly_stats     = {}
+# ===== Voice Stats (Multi-guild) =====
+voice_join_times = {}   # {(guild_id, member_id): (display_name, join_time, channel_name)}
+weekly_stats     = {}   # {guild_id: {user_id: {'name': str, 'seconds': int}}}
 summary_sent     = False
 
 def load_stats():
@@ -123,20 +124,21 @@ def format_duration(seconds):
     if h > 0:
         return f'{h} ชม. {m} นาที'
     return f'{m} นาที'
-# =======================
+# =====================================
 
-# ===== Heatmap =====
-hourly_activity = {str(h): 0 for h in range(24)}
+# ===== Heatmap (Multi-guild) =====
+hourly_activity = {}   # {guild_id: {hour_str: int}}
 
 def load_hourly():
+    global hourly_activity
     if os.path.exists(HOURLY_FILE):
         with open(HOURLY_FILE, encoding='utf-8') as f:
-            hourly_activity.update(json.load(f))
+            hourly_activity = json.load(f)
 
 def save_hourly():
     with open(HOURLY_FILE, 'w', encoding='utf-8') as f:
         json.dump(hourly_activity, f)
-# ===================
+# =================================
 
 # ===== Session History =====
 session_history = []
@@ -172,26 +174,65 @@ def register_joke_msg(msg_id, joke_text):
         active_joke_msgs.pop(next(iter(active_joke_msgs)))
 # ======================
 
-# ===== record join/leave =====
-def record_join(member_id, display_name, channel_name=''):
-    voice_join_times[member_id] = (display_name, datetime.now(THAI_TZ), channel_name)
+# ===== Trivia Scores =====
+trivia_scores = {}       # {guild_id: {user_id: {'name': str, 'score': int}}}
+active_trivia = {}       # {channel_id: {'answer': str, 'question': str, 'expires': datetime isoformat}}
+TRIVIA_ANSWER_WINDOW = 30  # วินาที
+
+def load_trivia_scores():
+    global trivia_scores
+    if os.path.exists(TRIVIA_SCORES_FILE):
+        with open(TRIVIA_SCORES_FILE, encoding='utf-8') as f:
+            trivia_scores = json.load(f)
+
+def save_trivia_scores():
+    with open(TRIVIA_SCORES_FILE, 'w', encoding='utf-8') as f:
+        json.dump(trivia_scores, f, ensure_ascii=False, indent=2)
+# =========================
+
+# ===== Anti-spam =====
+voice_spam_tracker = {}  # {(guild_id, member_id): [timestamps]}
+SPAM_WINDOW_SEC = 60
+SPAM_MAX_EVENTS = 5
+
+def check_voice_spam(guild_id, member_id):
+    key = (guild_id, member_id)
+    now = datetime.now(THAI_TZ)
+    events = voice_spam_tracker.get(key, [])
+    events = [t for t in events if (now - t).total_seconds() < SPAM_WINDOW_SEC]
+    events.append(now)
+    voice_spam_tracker[key] = events
+    return len(events) >= SPAM_MAX_EVENTS
+# =====================
+
+# ===== record join/leave (Multi-guild) =====
+def record_join(guild_id, member_id, display_name, channel_name=''):
+    voice_join_times[(guild_id, member_id)] = (display_name, datetime.now(THAI_TZ), channel_name)
+    gid = str(guild_id)
     hour = str(datetime.now(THAI_TZ).hour)
-    hourly_activity[hour] = hourly_activity.get(hour, 0) + 1
+    if gid not in hourly_activity:
+        hourly_activity[gid] = {str(h): 0 for h in range(24)}
+    hourly_activity[gid][hour] = hourly_activity[gid].get(hour, 0) + 1
     save_hourly()
 
-def record_leave(member_id):
-    if member_id not in voice_join_times:
+def record_leave(guild_id, member_id):
+    key = (guild_id, member_id)
+    if key not in voice_join_times:
         return
-    display_name, join_time, channel_name = voice_join_times.pop(member_id)
+    display_name, join_time, channel_name = voice_join_times.pop(key)
     leave_time = datetime.now(THAI_TZ)
     elapsed    = int((leave_time - join_time).total_seconds())
-    key = str(member_id)
-    if key not in weekly_stats:
-        weekly_stats[key] = {'name': display_name, 'seconds': 0}
-    weekly_stats[key]['name']    = display_name
-    weekly_stats[key]['seconds'] += elapsed
+    gid = str(guild_id)
+    if gid not in weekly_stats:
+        weekly_stats[gid] = {}
+    uid = str(member_id)
+    if uid not in weekly_stats[gid]:
+        weekly_stats[gid][uid] = {'name': display_name, 'seconds': 0}
+    weekly_stats[gid][uid]['name']    = display_name
+    weekly_stats[gid][uid]['seconds'] += elapsed
     save_stats()
     session_history.append({
+        'guild_id': str(guild_id),
         'uid':      str(member_id),
         'name':     display_name,
         'channel':  channel_name,
@@ -201,7 +242,7 @@ def record_leave(member_id):
         'seconds':  elapsed,
     })
     save_history()
-# =============================
+# ==========================================
 
 # ===== Cooldown =====
 mute_cooldown = {}
@@ -243,6 +284,43 @@ def log(msg):
         pass
 # ===================
 
+# ===== Time-range stats helper =====
+def get_stats_for_period(period='week', guild_id=None):
+    """period: 'today', 'week', 'month'"""
+    now = datetime.now(THAI_TZ)
+    combined = {}
+    for s in session_history:
+        if guild_id and s.get('guild_id') != guild_id:
+            continue
+        try:
+            join_dt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+        except Exception:
+            continue
+        if period == 'today' and join_dt.date() != now.date():
+            continue
+        if period == 'week':
+            week_start = now - timedelta(days=now.weekday())
+            if join_dt.date() < week_start.date():
+                continue
+        if period == 'month' and (join_dt.year != now.year or join_dt.month != now.month):
+            continue
+        uid = s.get('uid', '')
+        name = s.get('name', '')
+        if uid not in combined:
+            combined[uid] = {'name': name, 'seconds': 0}
+        combined[uid]['seconds'] += s.get('seconds', 0)
+    # รวม live users
+    for (gid, mid), (name, join_time, _) in voice_join_times.items():
+        if guild_id and str(gid) != guild_id:
+            continue
+        elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
+        key = str(mid)
+        if key not in combined:
+            combined[key] = {'name': name, 'seconds': 0}
+        combined[key]['seconds'] += elapsed
+    return combined
+# ===================================
+
 # ===== Discord Bot =====
 intents                 = discord.Intents.default()
 intents.voice_states    = True
@@ -272,14 +350,9 @@ async def send_joke_with_vote(channel, category, joke):
     await msg.add_reaction('👎')
     register_joke_msg(msg.id, joke)
 
-async def send_leaderboard(channel):
-    combined = {k: dict(v) for k, v in weekly_stats.items()}
-    for mid, (name, join_time, _) in voice_join_times.items():
-        elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
-        key = str(mid)
-        if key not in combined:
-            combined[key] = {'name': name, 'seconds': 0}
-        combined[key]['seconds'] += elapsed
+async def send_leaderboard(channel, combined=None, guild_id=None):
+    if combined is None:
+        combined = get_stats_for_period('week', guild_id=str(channel.guild.id) if channel.guild else None)
     if not combined:
         await channel.send('ยังไม่มีข้อมูล Voice ในสัปดาห์นี้')
         return
@@ -297,13 +370,8 @@ async def send_weekly_summary(channel=None):
         channel = ch_stats()
     if not channel:
         return
-    combined = {k: dict(v) for k, v in weekly_stats.items()}
-    for mid, (name, join_time, _) in voice_join_times.items():
-        elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
-        key = str(mid)
-        if key not in combined:
-            combined[key] = {'name': name, 'seconds': 0}
-        combined[key]['seconds'] += elapsed
+    guild_id = str(channel.guild.id) if channel.guild else None
+    combined = get_stats_for_period('week', guild_id=guild_id)
     if not combined:
         await channel.send('สัปดาห์นี้ไม่มีใครเข้าห้อง Voice เลย')
         return
@@ -316,6 +384,23 @@ async def send_weekly_summary(channel=None):
     lines.append('------------------------------------')
     await channel.send('\n'.join(lines))
 
+async def _post_trivia(channel, trivia_list=None):
+    if trivia_list is None:
+        trivia_list = load_trivia()
+    if not trivia_list:
+        return
+    item = random.choice(trivia_list)
+    question, answer = item.split('|', 1)
+    question = question.strip()
+    answer = answer.strip()
+    expires = datetime.now(THAI_TZ) + timedelta(seconds=TRIVIA_ANSWER_WINDOW)
+    active_trivia[channel.id] = {'answer': answer.lower(), 'question': question, 'expires': expires.isoformat()}
+    await channel.send(f'🤔 **คำถาม:** {question}\n_(ตอบภายใน {TRIVIA_ANSWER_WINDOW} วินาที)_')
+    await asyncio.sleep(TRIVIA_ANSWER_WINDOW)
+    if channel.id in active_trivia:
+        active_trivia.pop(channel.id, None)
+        await channel.send(f'✅ **เฉลย:** {answer}')
+
 @tasks.loop(minutes=30)
 async def send_content():
     if not bot_config['send_content']:
@@ -325,11 +410,7 @@ async def send_content():
         return
     trivia_list = load_trivia()
     if trivia_list and random.random() < 0.5:
-        item             = random.choice(trivia_list)
-        question, answer = item.split('|', 1)
-        await channel.send(f'ทดสอบความรู้: {question.strip()}')
-        await asyncio.sleep(bot_config['trivia_delay'])
-        await channel.send(f'เฉลย: {answer.strip()}')
+        await _post_trivia(channel, trivia_list)
     else:
         jokes = load_jokes()
         if jokes:
@@ -359,7 +440,8 @@ async def daily_backup_task():
     channel = ch_stats()
     if not channel:
         return
-    combined = {k: dict(v) for k, v in weekly_stats.items()}
+    guild_id = str(channel.guild.id) if channel.guild else None
+    combined = get_stats_for_period('week', guild_id=guild_id)
     total_sessions = len(session_history)
     top3 = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:3]
     lines = [f'📊 **Backup รายวัน** — {now.strftime("%Y-%m-%d")}',
@@ -369,6 +451,29 @@ async def daily_backup_task():
     await channel.send('\n'.join(lines))
     log('Daily backup sent to Discord')
 
+# ===== Feature 6: Bot status rotation =====
+_status_index = 0
+
+@tasks.loop(minutes=30)
+async def rotate_status():
+    global _status_index
+    if not client.is_ready():
+        return
+    combined = get_stats_for_period('week')
+    sorted_stats = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
+    uptime_sec = int((datetime.now(THAI_TZ) - start_time).total_seconds())
+    statuses = [
+        discord.Activity(type=discord.ActivityType.watching, name=f'Voice {len(voice_join_times)} คน'),
+        discord.Activity(type=discord.ActivityType.playing, name=f'Uptime {format_duration(uptime_sec)}'),
+    ]
+    if sorted_stats:
+        top_name = sorted_stats[0][1]['name']
+        statuses.append(discord.Activity(type=discord.ActivityType.listening, name=f'🏆 {top_name}'))
+    status = statuses[_status_index % len(statuses)]
+    _status_index += 1
+    await client.change_presence(activity=status)
+# ==========================================
+
 @client.event
 async def on_ready():
     load_stats()
@@ -376,29 +481,33 @@ async def on_ready():
     load_hourly()
     load_history()
     load_votes()
+    load_trivia_scores()
     log(f'Bot ready: {client.user}')
     send_content.start()
     weekly_summary_task.start()
     daily_backup_task.start()
+    rotate_status.start()
     await client.tree.sync()
 
-@client.tree.command(name="rank", description="แสดงอันดับ Voice สัปดาห์นี้")
+@client.tree.command(name="rank", description="แสดงอันดับ Voice")
+@app_commands.describe(period="ช่วงเวลา: today / week / month")
+@app_commands.choices(period=[
+    app_commands.Choice(name="วันนี้", value="today"),
+    app_commands.Choice(name="สัปดาห์นี้", value="week"),
+    app_commands.Choice(name="เดือนนี้", value="month"),
+])
 @app_commands.checks.cooldown(1, 30.0)
-async def slash_rank(interaction: discord.Interaction):
+async def slash_rank(interaction: discord.Interaction, period: str = "week"):
     await interaction.response.defer()
-    combined = {k: dict(v) for k, v in weekly_stats.items()}
-    for mid, (name, join_time, _) in voice_join_times.items():
-        elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
-        key = str(mid)
-        if key not in combined:
-            combined[key] = {'name': name, 'seconds': 0}
-        combined[key]['seconds'] += elapsed
+    guild_id = str(interaction.guild_id) if interaction.guild_id else None
+    combined = get_stats_for_period(period, guild_id=guild_id)
+    period_label = {"today": "วันนี้", "week": "สัปดาห์นี้", "month": "เดือนนี้"}.get(period, "สัปดาห์นี้")
     if not combined:
-        await interaction.followup.send('ยังไม่มีข้อมูล Voice ในสัปดาห์นี้')
+        await interaction.followup.send(f'ยังไม่มีข้อมูล Voice ({period_label})')
         return
     sorted_stats = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
     medals = ['🥇', '🥈', '🥉']
-    lines = ['--- อันดับ Voice สัปดาห์นี้ ---']
+    lines = [f'--- อันดับ Voice {period_label} ---']
     for i, (uid, data) in enumerate(sorted_stats[:10]):
         prefix = medals[i] if i < 3 else f'{i+1}.'
         lines.append(f'{prefix} {data["name"]}  {format_duration(data["seconds"])}')
@@ -423,11 +532,24 @@ async def slash_trivia(interaction: discord.Interaction):
     if not trivia_list:
         await interaction.response.send_message('ไม่มี Trivia ในระบบ', ephemeral=True)
         return
-    item = random.choice(trivia_list)
-    question, answer = item.split('|', 1)
-    await interaction.response.send_message(f'🤔 {question.strip()}')
-    await asyncio.sleep(bot_config['trivia_delay'])
-    await interaction.channel.send(f'✅ เฉลย: {answer.strip()}')
+    await interaction.response.defer()
+    await _post_trivia(interaction.channel, trivia_list)
+
+@client.tree.command(name="trivia-rank", description="อันดับคะแนน Trivia")
+async def slash_trivia_rank(interaction: discord.Interaction):
+    gid = str(interaction.guild_id) if interaction.guild_id else 'dm'
+    scores = trivia_scores.get(gid, {})
+    if not scores:
+        await interaction.response.send_message('ยังไม่มีคะแนน Trivia ในเซิร์ฟเวอร์นี้')
+        return
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1]['score'], reverse=True)
+    medals = ['🥇', '🥈', '🥉']
+    lines = ['--- อันดับ Trivia ---']
+    for i, (uid, data) in enumerate(sorted_scores[:10]):
+        prefix = medals[i] if i < 3 else f'{i+1}.'
+        lines.append(f'{prefix} {data["name"]}  {data["score"]} คะแนน')
+    lines.append('--------------------')
+    await interaction.response.send_message('\n'.join(lines))
 
 @slash_rank.error
 @slash_joke.error
@@ -440,9 +562,37 @@ async def on_slash_cooldown(interaction: discord.Interaction, error: app_command
 async def on_message(message):
     if message.author.bot:
         return
-    if message.content.strip().lower() == '!rank':
+
+    # Check trivia answer
+    if message.channel.id in active_trivia:
+        trivia_data = active_trivia[message.channel.id]
+        try:
+            expires = datetime.fromisoformat(trivia_data['expires']).replace(tzinfo=THAI_TZ)
+        except Exception:
+            expires = datetime.now(THAI_TZ)
+        if datetime.now(THAI_TZ) <= expires:
+            user_ans = message.content.strip().lower()
+            correct_ans = trivia_data['answer']
+            if user_ans == correct_ans or correct_ans in user_ans:
+                active_trivia.pop(message.channel.id, None)
+                gid = str(message.guild.id) if message.guild else 'dm'
+                uid = str(message.author.id)
+                if gid not in trivia_scores:
+                    trivia_scores[gid] = {}
+                if uid not in trivia_scores[gid]:
+                    trivia_scores[gid][uid] = {'name': message.author.display_name, 'score': 0}
+                trivia_scores[gid][uid]['score'] += 1
+                trivia_scores[gid][uid]['name'] = message.author.display_name
+                save_trivia_scores()
+                await message.reply(f'🎉 ถูกต้อง! +1 คะแนน (รวม {trivia_scores[gid][uid]["score"]} คะแนน)')
+
+    if message.content.strip().lower().startswith('!rank'):
+        parts = message.content.strip().lower().split()
+        period = parts[1] if len(parts) > 1 and parts[1] in ('today', 'week', 'month') else 'week'
         if check_command_rate(message.author.id, 'rank'):
-            await send_leaderboard(message.channel)
+            guild_id = str(message.guild.id) if message.guild else None
+            combined = get_stats_for_period(period, guild_id=guild_id)
+            await send_leaderboard(message.channel, combined=combined)
         else:
             await message.reply(f'⏳ รอ {COMMAND_COOLDOWN_SEC} วินาทีก่อนใช้คำสั่งนี้อีกครั้ง', delete_after=5)
 
@@ -494,18 +644,24 @@ async def on_voice_state_update(member, before, after):
         return
 
     if before.channel is None and after.channel is not None:
-        record_join(member.id, member.display_name, after.channel.name)
+        record_join(member.guild.id, member.id, member.display_name, after.channel.name)
         event_counts['join'] += 1
         if bot_config['announce_join']:
             await channel.send(f'{member.display_name} เข้าห้อง {after.channel.name}')
+        # Anti-spam check
+        if check_voice_spam(member.guild.id, member.id):
+            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({SPAM_MAX_EVENTS} ครั้งใน {SPAM_WINDOW_SEC} วินาที)')
     elif before.channel is not None and after.channel is None:
-        record_leave(member.id)
+        record_leave(member.guild.id, member.id)
         event_counts['leave'] += 1
         if bot_config['announce_leave']:
             await channel.send(f'{member.display_name} ออกจากห้อง {before.channel.name}')
+        # Anti-spam check
+        if check_voice_spam(member.guild.id, member.id):
+            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({SPAM_MAX_EVENTS} ครั้งใน {SPAM_WINDOW_SEC} วินาที)')
     elif before.channel != after.channel:
-        record_leave(member.id)
-        record_join(member.id, member.display_name, after.channel.name)
+        record_leave(member.guild.id, member.id)
+        record_join(member.guild.id, member.id, member.display_name, after.channel.name)
         if bot_config['announce_move']:
             await channel.send(f'{member.display_name} ย้ายจาก {before.channel.name} ไป {after.channel.name}')
 
@@ -680,6 +836,10 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="th">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#5865f2">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>VoiceLog Bot Dashboard</title>
 <style>
   :root{--bg:#1e1f22;--surface:#2b2d31;--card:#313338;--border:#3f4147;
@@ -923,10 +1083,18 @@ async function refreshStatus(){
 }
 async function loadHeatmap(){
   const r=await fetch('/api/heatmap');const d=await r.json();
-  const max=Math.max(...Object.values(d).map(Number),1);
+  // flatten multi-guild heatmap: sum all guilds
+  const flat={};
+  for(let h=0;h<24;h++)flat[String(h)]=0;
+  if(typeof Object.values(d)[0]==='object'){
+    for(const gdata of Object.values(d)){for(let h=0;h<24;h++){flat[String(h)]=(flat[String(h)]||0)+(Number(gdata[String(h)])||0);}}
+  } else {
+    for(let h=0;h<24;h++)flat[String(h)]=Number(d[String(h)]||0);
+  }
+  const max=Math.max(...Object.values(flat).map(Number),1);
   const chart=document.getElementById('heatmapChart');chart.innerHTML='';
   for(let h=0;h<24;h++){
-    const count=Number(d[String(h)]||0);const pct=Math.round((count/max)*100);
+    const count=Number(flat[String(h)]||0);const pct=Math.round((count/max)*100);
     const bar=document.createElement('div');bar.className='heatmap-bar';
     bar.style.cssText='background:rgba(88,101,242,'+(0.15+(pct/100)*0.85).toFixed(2)+');height:'+Math.max(pct,2)+'%';
     bar.title=String(h).padStart(2,'0')+':00 — '+count+' joins';chart.appendChild(bar);}
@@ -960,7 +1128,41 @@ async function resetVotes(){
 buildUI();loadConfig();refreshStatus();loadHeatmap();loadHistory();loadVotes();
 setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);
 </script>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}</script>
 </body></html>"""
+
+# ===== Feature 7: PWA manifest & service worker =====
+MANIFEST_JSON = '''{
+  "name": "VoiceLog Bot",
+  "short_name": "VoiceLog",
+  "description": "Discord VoiceLog Bot Dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1e1f22",
+  "theme_color": "#5865f2",
+  "icons": [
+    {"src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎙️</text></svg>", "sizes": "any", "type": "image/svg+xml"}
+  ]
+}'''
+
+SERVICE_WORKER_JS = """
+const CACHE = 'voicelog-v1';
+const OFFLINE = ['/'];
+self.addEventListener('install', e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(OFFLINE))));
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+});
+"""
+
+@flask_app.route('/manifest.json')
+def manifest():
+    return MANIFEST_JSON, 200, {'Content-Type': 'application/json'}
+
+@flask_app.route('/sw.js')
+def service_worker():
+    return SERVICE_WORKER_JS, 200, {'Content-Type': 'application/javascript'}
+# ====================================================
 
 @flask_app.route('/')
 @require_auth
@@ -975,23 +1177,37 @@ def profile_page(uid):
 @flask_app.route('/api/status')
 @require_auth
 def api_status():
+    guild_id   = request.args.get('guild_id')
     online     = client.is_ready()
     uptime_sec = int((datetime.now(THAI_TZ) - start_time).total_seconds())
     voice_users = []
-    for mid, (name, join_time, ch) in voice_join_times.items():
+    for (gid, mid), (name, join_time, ch) in voice_join_times.items():
+        if guild_id and str(gid) != guild_id:
+            continue
         elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
-        voice_users.append({'name': name, 'duration': format_duration(elapsed), 'channel': ch})
-    combined = {k: dict(v) for k, v in weekly_stats.items()}
-    for mid, (name, join_time, _) in voice_join_times.items():
-        elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
-        key = str(mid)
-        if key not in combined:
-            combined[key] = {'name': name, 'seconds': 0}
-        combined[key]['seconds'] += elapsed
+        voice_users.append({'name': name, 'duration': format_duration(elapsed), 'channel': ch, 'guild_id': str(gid)})
+    combined = get_stats_for_period('week', guild_id=guild_id)
     stats_sorted   = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
     weekly_display = [{'uid': k, 'name': v['name'], 'time': format_duration(v['seconds'])} for k, v in stats_sorted[:10]]
     return jsonify({'online': online, 'uptime': format_duration(uptime_sec),
                     'event_counts': event_counts, 'voice_users': voice_users, 'weekly_stats': weekly_display})
+
+@flask_app.route('/api/stats/<period>')
+@require_auth
+def api_stats_period(period):
+    if period not in ('today', 'week', 'month'):
+        return jsonify({'error': 'period must be today, week, or month'}), 400
+    guild_id = request.args.get('guild_id')
+    data = get_stats_for_period(period, guild_id=guild_id)
+    return jsonify(data)
+
+@flask_app.route('/api/guilds')
+@require_auth
+def api_guilds():
+    guilds = []
+    for g in client.guilds:
+        guilds.append({'id': str(g.id), 'name': g.name, 'member_count': g.member_count})
+    return jsonify(guilds)
 
 @flask_app.route('/api/config', methods=['GET'])
 @require_auth
@@ -1029,16 +1245,18 @@ def api_history():
 @flask_app.route('/api/profile/<uid>')
 @require_auth
 def api_profile(uid):
-    data    = weekly_stats.get(uid, {})
-    name    = data.get('name', 'Unknown')
-    seconds = data.get('seconds', 0)
-    try:
-        mid_int = int(uid)
-        if mid_int in voice_join_times:
-            _, jt, _ = voice_join_times[mid_int]
+    # Search across all guilds
+    seconds = 0
+    name = 'Unknown'
+    for gid, gdata in weekly_stats.items():
+        if uid in gdata:
+            seconds += gdata[uid].get('seconds', 0)
+            name = gdata[uid].get('name', name)
+    # Add live time if present
+    for (gid, mid), (n, jt, _) in voice_join_times.items():
+        if str(mid) == uid:
             seconds += int((datetime.now(THAI_TZ) - jt).total_seconds())
-    except Exception:
-        pass
+            name = n
     sessions    = [s for s in session_history if s.get('uid') == uid or s.get('name') == name]
     hour_counts = {}
     for s in sessions:
@@ -1075,6 +1293,11 @@ def api_votes_reset():
     joke_votes.clear()
     save_votes()
     return jsonify({'ok': True})
+
+@flask_app.route('/api/trivia-scores')
+@require_auth
+def api_trivia_scores():
+    return jsonify(trivia_scores)
 
 @flask_app.route('/api/action/joke', methods=['POST'])
 @require_auth
@@ -1120,15 +1343,10 @@ async def _test_joke():
     await send_joke_with_vote(channel, category, joke)
 
 async def _test_trivia():
-    channel     = ch_content()
-    trivia_list = load_trivia()
-    if not channel or not trivia_list:
+    channel = ch_content()
+    if not channel:
         return
-    item             = random.choice(trivia_list)
-    question, answer = item.split('|', 1)
-    await channel.send(f'ทดสอบความรู้: {question.strip()}')
-    await asyncio.sleep(bot_config['trivia_delay'])
-    await channel.send(f'เฉลย: {answer.strip()}')
+    await _post_trivia(channel)
 # ===========================
 
 # ===== Start =====
