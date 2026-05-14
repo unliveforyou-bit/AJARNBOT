@@ -21,6 +21,7 @@ VOICE_LOG_CHANNEL_ID = int(os.environ['VOICE_LOG_CHANNEL_ID'])  # required
 DASHBOARD_PORT       = int(os.environ.get('PORT', 5000))
 DASHBOARD_PASSWORD   = os.environ.get('DASHBOARD_PASSWORD', '')  # optional basic auth
 OUTBOUND_WEBHOOK_URL = os.environ.get('OUTBOUND_WEBHOOK_URL', '')  # optional outbound webhook
+DASHBOARD_API_KEY    = os.environ.get('DASHBOARD_API_KEY', '')     # optional API key for external access
 # =================================
 
 # ===== Paths =====
@@ -720,6 +721,9 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         if not DASHBOARD_PASSWORD:
             return f(*args, **kwargs)
+        # Allow X-API-Key header for external/programmatic access
+        if DASHBOARD_API_KEY and request.headers.get('X-API-Key') == DASHBOARD_API_KEY:
+            return f(*args, **kwargs)
         if not flask_session.get('logged_in'):
             if request.path.startswith('/api/'):
                 return Response('Unauthorized', 401)
@@ -1029,6 +1033,13 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </table>
   </div>
 </div>
+<div class="card">
+  <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+    <span>Bot Logs — ล่าสุด 100 บรรทัด</span>
+    <button class="btn btn-primary" style="padding:4px 10px;font-size:12px" onclick="loadLogs()">&#8635; Refresh</button>
+  </div>
+  <div id="logBox" style="background:var(--bg);border-radius:6px;padding:12px;font-family:monospace;font-size:12px;color:var(--muted);max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">กำลังโหลด...</div>
+</div>
 </main>
 <div class="toast" id="toast"></div>
 <script>
@@ -1156,8 +1167,17 @@ async function resetVotes(){
   showToast('รีเซ็ตแล้ว');loadVotes();
 }
 function toggleTheme(){const light=document.body.classList.toggle('light');localStorage.setItem('theme',light?'light':'dark');document.getElementById('themeBtn').textContent=light?'☀️':'🌙';}
+async function loadLogs(){
+  try{
+    const r=await fetch('/api/logs');const d=await r.json();
+    const box=document.getElementById('logBox');
+    box.textContent=d.lines.join('\n')||'(ยังไม่มี log)';
+    box.scrollTop=box.scrollHeight;
+  }catch(e){document.getElementById('logBox').textContent='โหลด log ไม่ได้';}
+}
 if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');document.getElementById('themeBtn').textContent='☀️';}
-buildUI();loadConfig();refreshStatus();loadHeatmap();loadHistory();loadVotes();
+buildUI();loadConfig();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
+setInterval(loadLogs,30000);
 setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);
 </script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}</script>
@@ -1344,6 +1364,25 @@ def health():
         'voice_users': len(voice_join_times),
         'timestamp': datetime.now(THAI_TZ).isoformat(),
     })
+
+@flask_app.route('/api/logs')
+@require_auth
+def api_logs():
+    lines = []
+    if os.path.exists(LOG_FILE):
+        with open(LOG_FILE, encoding='utf-8', errors='replace') as f:
+            lines = f.readlines()
+    return jsonify({'lines': [l.rstrip() for l in lines[-100:]]})
+
+@flask_app.route('/api/apikey')
+@require_auth
+def api_apikey():
+    """Return masked API key info — ใช้สำหรับตรวจสอบว่า key ถูก set หรือไม่"""
+    if not DASHBOARD_API_KEY:
+        return jsonify({'enabled': False, 'message': 'Set DASHBOARD_API_KEY env var to enable API key auth'})
+    masked = DASHBOARD_API_KEY[:4] + '*' * (len(DASHBOARD_API_KEY) - 8) + DASHBOARD_API_KEY[-4:]
+    return jsonify({'enabled': True, 'key_preview': masked,
+                    'usage': 'Add header: X-API-Key: <your-key>'})
 
 @flask_app.route('/api/action/joke', methods=['POST'])
 @require_auth
