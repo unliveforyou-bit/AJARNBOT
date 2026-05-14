@@ -5,10 +5,12 @@ VoiceLog Bot — Cloud version (Railway)
 """
 import discord
 from discord.ext import tasks
-import random, os, sys, asyncio, threading, json
+from discord.ext import commands as _commands
+from discord import app_commands
+import random, os, sys, asyncio, threading, json, secrets
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, redirect, session as flask_session
 from functools import wraps
 
 THAI_TZ = ZoneInfo('Asia/Bangkok')
@@ -22,7 +24,7 @@ DASHBOARD_PASSWORD   = os.environ.get('DASHBOARD_PASSWORD', '')  # optional basi
 
 # ===== Paths =====
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR     = os.path.join(BASE_DIR, 'data')
+DATA_DIR     = os.environ.get('RAILWAY_VOLUME_MOUNT_PATH') or os.path.join(BASE_DIR, 'data')
 JOKES_FILE   = os.path.join(BASE_DIR, 'jokes.txt')
 TRIVIA_FILE  = os.path.join(BASE_DIR, 'trivia.txt')
 STATS_FILE   = os.path.join(DATA_DIR, 'voice_stats.json')
@@ -211,6 +213,18 @@ def check_cooldown(member_id, event):
         return False
     mute_cooldown[key] = now
     return True
+
+command_rate_limit = {}  # {(user_id, cmd): last_used_timestamp}
+COMMAND_COOLDOWN_SEC = 30
+
+def check_command_rate(user_id, cmd):
+    key = (user_id, cmd)
+    now = datetime.now(THAI_TZ)
+    last = command_rate_limit.get(key)
+    if last and (now - last).total_seconds() < COMMAND_COOLDOWN_SEC:
+        return False
+    command_rate_limit[key] = now
+    return True
 # ====================
 
 # ===== Uptime + event counter =====
@@ -234,8 +248,13 @@ intents                 = discord.Intents.default()
 intents.voice_states    = True
 intents.messages        = True
 intents.message_content = True
-client                  = discord.Client(intents=intents)
-bot_loop                = None
+
+class VoiceBot(discord.ext.commands.Bot):
+    def __init__(self):
+        super().__init__(command_prefix='!', intents=intents)
+
+client   = VoiceBot()
+bot_loop = None
 
 def ch_voice():   return client.get_channel(int(bot_config['channel_voice']))
 def ch_content(): return client.get_channel(int(bot_config['channel_content']))
@@ -332,6 +351,24 @@ async def weekly_summary_task():
     else:
         summary_sent = False
 
+@tasks.loop(hours=1)
+async def daily_backup_task():
+    now = datetime.now(THAI_TZ)
+    if now.hour != 0:
+        return
+    channel = ch_stats()
+    if not channel:
+        return
+    combined = {k: dict(v) for k, v in weekly_stats.items()}
+    total_sessions = len(session_history)
+    top3 = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:3]
+    lines = [f'📊 **Backup รายวัน** — {now.strftime("%Y-%m-%d")}',
+             f'Sessions รวม: {total_sessions}']
+    for i, (uid, d) in enumerate(top3):
+        lines.append(f'{i+1}. {d["name"]} — {format_duration(d["seconds"])}')
+    await channel.send('\n'.join(lines))
+    log('Daily backup sent to Discord')
+
 @client.event
 async def on_ready():
     load_stats()
@@ -342,13 +379,72 @@ async def on_ready():
     log(f'Bot ready: {client.user}')
     send_content.start()
     weekly_summary_task.start()
+    daily_backup_task.start()
+    await client.tree.sync()
+
+@client.tree.command(name="rank", description="แสดงอันดับ Voice สัปดาห์นี้")
+@app_commands.checks.cooldown(1, 30.0)
+async def slash_rank(interaction: discord.Interaction):
+    await interaction.response.defer()
+    combined = {k: dict(v) for k, v in weekly_stats.items()}
+    for mid, (name, join_time, _) in voice_join_times.items():
+        elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
+        key = str(mid)
+        if key not in combined:
+            combined[key] = {'name': name, 'seconds': 0}
+        combined[key]['seconds'] += elapsed
+    if not combined:
+        await interaction.followup.send('ยังไม่มีข้อมูล Voice ในสัปดาห์นี้')
+        return
+    sorted_stats = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
+    medals = ['🥇', '🥈', '🥉']
+    lines = ['--- อันดับ Voice สัปดาห์นี้ ---']
+    for i, (uid, data) in enumerate(sorted_stats[:10]):
+        prefix = medals[i] if i < 3 else f'{i+1}.'
+        lines.append(f'{prefix} {data["name"]}  {format_duration(data["seconds"])}')
+    lines.append('------------------------------')
+    await interaction.followup.send('\n'.join(lines))
+
+@client.tree.command(name="joke", description="รับมุขสุ่ม")
+@app_commands.checks.cooldown(1, 15.0)
+async def slash_joke(interaction: discord.Interaction):
+    jokes = load_jokes()
+    if not jokes:
+        await interaction.response.send_message('ไม่มีมุขในระบบ', ephemeral=True)
+        return
+    category, joke = random.choice(jokes)
+    await interaction.response.defer()
+    await send_joke_with_vote(interaction.channel, category, joke)
+
+@client.tree.command(name="trivia", description="รับคำถาม Trivia")
+@app_commands.checks.cooldown(1, 15.0)
+async def slash_trivia(interaction: discord.Interaction):
+    trivia_list = load_trivia()
+    if not trivia_list:
+        await interaction.response.send_message('ไม่มี Trivia ในระบบ', ephemeral=True)
+        return
+    item = random.choice(trivia_list)
+    question, answer = item.split('|', 1)
+    await interaction.response.send_message(f'🤔 {question.strip()}')
+    await asyncio.sleep(bot_config['trivia_delay'])
+    await interaction.channel.send(f'✅ เฉลย: {answer.strip()}')
+
+@slash_rank.error
+@slash_joke.error
+@slash_trivia.error
+async def on_slash_cooldown(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.CommandOnCooldown):
+        await interaction.response.send_message(f'⏳ รอ {error.retry_after:.0f} วินาทีก่อน', ephemeral=True)
 
 @client.event
 async def on_message(message):
     if message.author.bot:
         return
     if message.content.strip().lower() == '!rank':
-        await send_leaderboard(message.channel)
+        if check_command_rate(message.author.id, 'rank'):
+            await send_leaderboard(message.channel)
+        else:
+            await message.reply(f'⏳ รอ {COMMAND_COOLDOWN_SEC} วินาทีก่อนใช้คำสั่งนี้อีกครั้ง', delete_after=5)
 
 @client.event
 async def on_raw_reaction_add(payload):
@@ -433,19 +529,64 @@ async def on_voice_state_update(member, before, after):
 
 # ===== Flask Dashboard =====
 flask_app = Flask(__name__)
+flask_app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
 
-# Basic auth (ถ้าตั้ง DASHBOARD_PASSWORD)
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if not DASHBOARD_PASSWORD:
             return f(*args, **kwargs)
-        auth = request.authorization
-        if not auth or auth.password != DASHBOARD_PASSWORD:
-            return Response('Unauthorized', 401,
-                {'WWW-Authenticate': 'Basic realm="VoiceLog Bot"'})
+        if not flask_session.get('logged_in'):
+            if request.path.startswith('/api/'):
+                return Response('Unauthorized', 401)
+            return redirect('/login')
         return f(*args, **kwargs)
     return decorated
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="th">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Login — VoiceLog Bot</title>
+<style>
+  body{background:#1e1f22;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;font-family:'Segoe UI',sans-serif;}
+  .box{background:#2b2d31;border:1px solid #3f4147;border-radius:12px;padding:40px;width:320px;}
+  h2{color:#dbdee1;margin-bottom:24px;font-size:20px;text-align:center;}
+  input{width:100%;background:#1e1f22;border:1px solid #3f4147;border-radius:6px;color:#dbdee1;padding:10px 14px;font-size:14px;box-sizing:border-box;margin-bottom:12px;}
+  input:focus{outline:none;border-color:#5865f2;}
+  button{width:100%;background:#5865f2;color:white;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:600;cursor:pointer;}
+  button:hover{background:#4752c4;}
+  .err{color:#da373c;font-size:13px;text-align:center;margin-top:8px;}
+  .logo{text-align:center;font-size:36px;margin-bottom:16px;}
+</style>
+</head>
+<body><div class="box">
+  <div class="logo">🎙️</div>
+  <h2>VoiceLog Bot</h2>
+  <form method="post">
+    <input name="password" type="password" placeholder="รหัสผ่าน" autofocus>
+    <button type="submit">เข้าสู่ระบบ</button>
+    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  </form>
+</div></body></html>"""
+
+@flask_app.route('/login', methods=['GET', 'POST'])
+def login():
+    from flask import render_template_string
+    if not DASHBOARD_PASSWORD:
+        return redirect('/')
+    error = None
+    if request.method == 'POST':
+        if request.form.get('password') == DASHBOARD_PASSWORD:
+            flask_session['logged_in'] = True
+            flask_session.permanent = True
+            return redirect('/')
+        error = 'รหัสผ่านไม่ถูกต้อง'
+    return render_template_string(LOGIN_HTML, error=error)
+
+@flask_app.route('/logout')
+def logout():
+    flask_session.clear()
+    return redirect('/login')
 
 PROFILE_HTML = """<!DOCTYPE html>
 <html lang="th">
@@ -490,6 +631,7 @@ PROFILE_HTML = """<!DOCTYPE html>
 <header>
   <a class="back" href="/">&#8592; Dashboard</a>
   <h1 id="pageTitle">Member Profile</h1>
+  <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto">ออกจากระบบ</a>
 </header>
 <main>
   <div class="card"><div class="hero">
@@ -617,6 +759,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <h1>VoiceLog Bot</h1>
   <div class="status-dot" id="statusDot"></div>
   <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
+  <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto">ออกจากระบบ</a>
 </header>
 <main>
 <div class="card">
