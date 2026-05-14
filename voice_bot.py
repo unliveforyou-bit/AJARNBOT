@@ -7,7 +7,7 @@ import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
 from discord import app_commands
-import random, os, sys, asyncio, threading, json, secrets
+import random, os, sys, asyncio, threading, json, secrets, urllib.request
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session
@@ -20,6 +20,7 @@ TOKEN                = os.environ['DISCORD_TOKEN']           # required
 VOICE_LOG_CHANNEL_ID = int(os.environ['VOICE_LOG_CHANNEL_ID'])  # required
 DASHBOARD_PORT       = int(os.environ.get('PORT', 5000))
 DASHBOARD_PASSWORD   = os.environ.get('DASHBOARD_PASSWORD', '')  # optional basic auth
+OUTBOUND_WEBHOOK_URL = os.environ.get('OUTBOUND_WEBHOOK_URL', '')  # optional outbound webhook
 # =================================
 
 # ===== Paths =====
@@ -194,6 +195,20 @@ def save_trivia_scores():
 voice_spam_tracker = {}  # {(guild_id, member_id): [timestamps]}
 SPAM_WINDOW_SEC = 60
 SPAM_MAX_EVENTS = 5
+
+def fire_outbound_webhook(event, payload):
+    """ส่ง event ไปยัง OUTBOUND_WEBHOOK_URL แบบ non-blocking"""
+    if not OUTBOUND_WEBHOOK_URL:
+        return
+    def _send():
+        try:
+            body = json.dumps({'event': event, **payload, 'timestamp': datetime.now(THAI_TZ).isoformat()}).encode()
+            req = urllib.request.Request(OUTBOUND_WEBHOOK_URL, data=body,
+                                         headers={'Content-Type': 'application/json'}, method='POST')
+            urllib.request.urlopen(req, timeout=5)
+        except Exception as e:
+            log(f'Webhook error: {e}')
+    threading.Thread(target=_send, daemon=True).start()
 
 def check_voice_spam(guild_id, member_id):
     key = (guild_id, member_id)
@@ -450,6 +465,18 @@ async def daily_backup_task():
         lines.append(f'{i+1}. {d["name"]} — {format_duration(d["seconds"])}')
     await channel.send('\n'.join(lines))
     log('Daily backup sent to Discord')
+    # Auto-purge sessions older than 90 days
+    if now.weekday() == 0:  # ทุกวันจันทร์
+        cutoff = now - timedelta(days=90)
+        before = len(session_history)
+        session_history[:] = [
+            s for s in session_history
+            if datetime.strptime(s.get('join', '2000-01-01 00:00'), '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ) >= cutoff
+        ]
+        purged = before - len(session_history)
+        if purged > 0:
+            save_history()
+            log(f'Auto-purged {purged} sessions older than 90 days')
 
 # ===== Feature 6: Bot status rotation =====
 _status_index = 0
@@ -648,7 +675,7 @@ async def on_voice_state_update(member, before, after):
         event_counts['join'] += 1
         if bot_config['announce_join']:
             await channel.send(f'{member.display_name} เข้าห้อง {after.channel.name}')
-        # Anti-spam check
+        fire_outbound_webhook('voice_join', {'user': member.display_name, 'channel': after.channel.name, 'guild': member.guild.name})
         if check_voice_spam(member.guild.id, member.id):
             await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({SPAM_MAX_EVENTS} ครั้งใน {SPAM_WINDOW_SEC} วินาที)')
     elif before.channel is not None and after.channel is None:
@@ -656,7 +683,7 @@ async def on_voice_state_update(member, before, after):
         event_counts['leave'] += 1
         if bot_config['announce_leave']:
             await channel.send(f'{member.display_name} ออกจากห้อง {before.channel.name}')
-        # Anti-spam check
+        fire_outbound_webhook('voice_leave', {'user': member.display_name, 'channel': before.channel.name, 'guild': member.guild.name})
         if check_voice_spam(member.guild.id, member.id):
             await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({SPAM_MAX_EVENTS} ครั้งใน {SPAM_WINDOW_SEC} วินาที)')
     elif before.channel != after.channel:
@@ -664,6 +691,7 @@ async def on_voice_state_update(member, before, after):
         record_join(member.guild.id, member.id, member.display_name, after.channel.name)
         if bot_config['announce_move']:
             await channel.send(f'{member.display_name} ย้ายจาก {before.channel.name} ไป {after.channel.name}')
+        fire_outbound_webhook('voice_move', {'user': member.display_name, 'from': before.channel.name, 'to': after.channel.name, 'guild': member.guild.name})
 
     if before.self_mute != after.self_mute and bot_config['announce_mute'] and check_cooldown(member.id, 'mute'):
         event_counts['mute'] += 1
@@ -911,6 +939,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   .toast.show{opacity:1;transform:translateY(0);}
   .toast.err{background:var(--red);}
   @media(max-width:640px){.two-col{grid-template-columns:1fr;}}
+  body.light{--bg:#f2f3f5;--surface:#e3e5e8;--card:#ffffff;--border:#d4d7dc;--text:#2e3035;--muted:#5c6370;}
 </style>
 </head>
 <body>
@@ -919,6 +948,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <h1>VoiceLog Bot</h1>
   <div class="status-dot" id="statusDot"></div>
   <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
+  <button id="themeBtn" onclick="toggleTheme()" style="margin-left:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;">🌙</button>
   <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto">ออกจากระบบ</a>
 </header>
 <main>
@@ -1125,6 +1155,8 @@ async function resetVotes(){
   await fetch('/api/votes/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
   showToast('รีเซ็ตแล้ว');loadVotes();
 }
+function toggleTheme(){const light=document.body.classList.toggle('light');localStorage.setItem('theme',light?'light':'dark');document.getElementById('themeBtn').textContent=light?'☀️':'🌙';}
+if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');document.getElementById('themeBtn').textContent='☀️';}
 buildUI();loadConfig();refreshStatus();loadHeatmap();loadHistory();loadVotes();
 setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);
 </script>
@@ -1298,6 +1330,20 @@ def api_votes_reset():
 @require_auth
 def api_trivia_scores():
     return jsonify(trivia_scores)
+
+@flask_app.route('/health')
+def health():
+    uptime_sec = int((datetime.now(THAI_TZ) - start_time).total_seconds())
+    latency_ms = round(client.latency * 1000, 1) if client.is_ready() else None
+    return jsonify({
+        'ok': client.is_ready(),
+        'uptime': format_duration(uptime_sec),
+        'uptime_seconds': uptime_sec,
+        'guilds': len(client.guilds) if client.is_ready() else 0,
+        'latency_ms': latency_ms,
+        'voice_users': len(voice_join_times),
+        'timestamp': datetime.now(THAI_TZ).isoformat(),
+    })
 
 @flask_app.route('/api/action/joke', methods=['POST'])
 @require_auth
