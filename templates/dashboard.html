@@ -3,162 +3,344 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#5865f2">
+<meta name="theme-color" content="#58a6ff">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>VoiceLog Bot Dashboard</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header>
-  <div class="logo" aria-hidden="true">&#127908;</div>
-  <h1>VoiceLog Bot</h1>
-  <!-- #16 — decorative dot; aria-label set dynamically in refreshStatus() -->
-  <div class="status-dot" id="statusDot" role="img" aria-label="กำลังเชื่อมต่อ..."></div>
-  <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
-  <span id="clockThai" style="font-size:12px;color:var(--muted);margin-left:16px;font-family:monospace;letter-spacing:.5px"></span>
-  <button id="themeBtn" onclick="toggleTheme()" aria-label="สลับธีม" style="margin-left:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;"><span aria-hidden="true">🌙</span></button>
-  <span id="roleBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;color:white;margin-left:12px;"></span>
-  <nav aria-label="การนำทาง" style="display:contents">
-  <!-- #6 — sr-only label wires guildSwitcher to accessible name -->
-  <label class="sr-only" for="guildSwitcher">เลือก Server</label>
-  <select id="guildSwitcher" class="guild-select" style="margin-left:auto" title="เปลี่ยน Server" onchange="switchGuild(this.value)">
-    <option value="">— เลือก Server —</option>
-  </select>
-  <a href="/invite" target="_blank" class="invite-btn" style="margin-left:8px" title="เพิ่มบอทไปยัง Server ใหม่">+ เพิ่ม Server</a>
-  <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:8px">ออกจากระบบ</a>
-  </nav>
-</header>
-<main>
-<section class="card" aria-labelledby="ct-status">
-  <h2 class="card-title" id="ct-status">สถานะ Bot</h2>
-  <div class="uptime-grid">
-    <div class="uptime-box"><div class="val" id="upVal" aria-labelledby="lbl-uptime">-</div><div class="lbl" id="lbl-uptime">Uptime</div></div>
-    <div class="uptime-box"><div class="val" id="evJoin" aria-labelledby="lbl-join">0</div><div class="lbl" id="lbl-join">เข้าห้อง</div></div>
-    <div class="uptime-box"><div class="val" id="evLeave" aria-labelledby="lbl-leave">0</div><div class="lbl" id="lbl-leave">ออกห้อง</div></div>
-    <div class="uptime-box"><div class="val" id="evMute" aria-labelledby="lbl-mute">0</div><div class="lbl" id="lbl-mute">Mute</div></div>
-    <div class="uptime-box"><div class="val" id="evDeaf" aria-labelledby="lbl-deaf">0</div><div class="lbl" id="lbl-deaf">Deaf</div></div>
-    <div class="uptime-box"><div class="val" id="evStream" aria-labelledby="lbl-stream">0</div><div class="lbl" id="lbl-stream">Stream</div></div>
-    <div class="uptime-box"><div class="val" id="evVideo" aria-labelledby="lbl-video">0</div><div class="lbl" id="lbl-video">กล้อง</div></div>
+<div class="app-layout">
+
+<!-- Sidebar -->
+<nav class="sidebar" id="sidebar" aria-label="เมนูหลัก">
+  <a href="#" class="sidebar-brand" aria-label="VoiceLog Bot">
+    <div class="sidebar-brand-icon" aria-hidden="true">🎤</div>
+    <span class="sidebar-brand-name">VoiceLog</span>
+  </a>
+
+  <div class="sidebar-section">
+    <span class="sidebar-section-label">ภาพรวม</span>
+    <ul class="sidebar-nav">
+      <li><a href="#ct-status-section">📊 สถานะ Bot</a></li>
+      <li><a href="#ct-heatmap-section">🔥 Heatmap</a></li>
+      <li><a href="#ct-voice-section">🎙️ Voice Live</a></li>
+    </ul>
   </div>
-</section>
-<section class="card owner-only" aria-labelledby="ct-announce">
-  <h2 class="card-title" id="ct-announce">การแจ้งเตือน <span style="font-size:11px;color:#f0b232">👑 Owner</span></h2>
-  <div class="toggle-grid" id="toggleGrid"></div>
-</section>
-<section class="card owner-only" aria-labelledby="ct-content">
-  <h2 class="card-title" id="ct-content">ส่งมุขและ Trivia <span style="font-size:11px;color:#f0b232">👑 Owner</span></h2>
-  <div class="toggle-grid" style="margin-bottom:14px">
-    <div class="toggle-item">
-      <span class="toggle-label" id="lbl_send_content">เปิดใช้งาน (รวม)</span>
-      <label class="switch">
-        <input type="checkbox" id="toggle_send_content" aria-labelledby="lbl_send_content" onchange="toggleConfig('send_content',this.checked)">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <div class="toggle-item">
-      <span class="toggle-label" id="lbl_send_jokes">ส่งมุข</span>
-      <label class="switch">
-        <input type="checkbox" id="toggle_send_jokes" aria-labelledby="lbl_send_jokes" onchange="toggleConfig('send_jokes',this.checked)">
-        <span class="slider"></span>
-      </label>
-    </div>
-    <div class="toggle-item">
-      <span class="toggle-label" id="lbl_send_trivia">ส่งคำถาม Trivia</span>
-      <label class="switch">
-        <input type="checkbox" id="toggle_send_trivia" aria-labelledby="lbl_send_trivia" onchange="toggleConfig('send_trivia',this.checked)">
-        <span class="slider"></span>
-      </label>
-    </div>
+
+  <div class="sidebar-section">
+    <span class="sidebar-section-label">การตั้งค่า</span>
+    <ul class="sidebar-nav">
+      <li><a href="#ct-announce-section">🔔 การแจ้งเตือน</a></li>
+      <li><a href="#ct-content-section">🎭 มุข &amp; Trivia</a></li>
+      <li><a href="#ct-routing-section">📡 Channel Routing</a></li>
+      <li><a href="#ct-spam-section">🛡️ Anti-Spam</a></li>
+    </ul>
   </div>
-  <div class="config-grid" id="numGrid"></div>
-  <div class="btn-row"><button class="btn btn-primary" onclick="saveNums()">บันทึก</button></div>
-</section>
-<section class="card" aria-labelledby="ct-routing">
-  <h2 class="card-title" id="ct-routing">Channel Routing — ต่อ Server</h2>
-  <div style="margin-bottom:12px">
-    <!-- #6 — label wired to select via for/id -->
-    <label for="guildSelect" style="font-size:12px;color:var(--muted)">เลือก Server ที่ต้องการตั้งค่า</label>
-    <select id="guildSelect" onchange="onGuildChange()" style="display:block;width:100%;margin-top:6px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:14px;cursor:pointer">
-      <option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>
+
+  <div class="sidebar-section">
+    <span class="sidebar-section-label">ข้อมูล</span>
+    <ul class="sidebar-nav">
+      <li><a href="#ct-stats-section">🏆 สถิติ</a></li>
+      <li><a href="#ct-votes-section">👍 คะแนนมุข</a></li>
+      <li><a href="#ct-history-section">📋 Session History</a></li>
+      <li><a href="#ct-logs-section">🖥️ Bot Logs</a></li>
+    </ul>
+  </div>
+
+  <div class="sidebar-section">
+    <span class="sidebar-section-label">การกระทำ</span>
+    <ul class="sidebar-nav">
+      <li><a href="#ct-actions-section">⚡ Actions</a></li>
+    </ul>
+  </div>
+
+  <div class="sidebar-footer">
+    <div class="sidebar-server-label">เซิร์ฟเวอร์</div>
+    <label class="sr-only" for="guildSwitcher">เลือก Server</label>
+    <select id="guildSwitcher" class="guild-select" style="width:100%;max-width:none;margin-top:4px" title="เปลี่ยน Server" onchange="switchGuild(this.value)">
+      <option value="">— เลือก Server —</option>
     </select>
   </div>
-  <div class="config-grid">
-    <!-- #7 — channel labels wired via for/id -->
-    <div class="config-item"><label for="ch_voice">Voice Events</label>
-      <select id="ch_voice" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
+</nav>
+
+<!-- Sidebar overlay (mobile) -->
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
+<!-- Main -->
+<div class="main-wrapper">
+
+  <!-- Header -->
+  <header>
+    <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()" aria-label="เปิด/ปิดเมนู" aria-expanded="false" aria-controls="sidebar">
+      <span aria-hidden="true">☰</span>
+    </button>
+
+    <div class="header-status">
+      <div class="status-dot" id="statusDot" role="img" aria-label="กำลังเชื่อมต่อ..."></div>
+      <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
     </div>
-    <div class="config-item"><label for="ch_content">มุขและ Trivia</label>
-      <select id="ch_content" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
+
+    <span id="clockThai"></span>
+
+    <div class="header-spacer"></div>
+
+    <button id="themeBtn" onclick="toggleTheme()" aria-label="สลับธีม"><span aria-hidden="true">🌙</span></button>
+
+    <span id="roleBadge" role="img" style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;color:white;"></span>
+
+    <nav aria-label="การนำทาง" style="display:contents">
+      <a href="/invite" target="_blank" class="invite-btn" aria-label="เพิ่ม Server เปิดในแท็บใหม่">
+        <span aria-hidden="true">+</span> เพิ่ม Server
+      </a>
+      <a href="/logout" class="logout-link">ออกจากระบบ</a>
+    </nav>
+  </header>
+
+  <!-- Main Content -->
+  <main>
+
+    <!-- 1. สถานะ Bot -->
+    <section class="card" id="ct-status-section" aria-labelledby="ct-status">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true">📊</div>
+        <h2 class="card-title" id="ct-status">สถานะ Bot</h2>
+      </div>
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <div class="stat-value" id="upVal" aria-labelledby="lbl-uptime">-</div>
+          <div class="stat-label" id="lbl-uptime">Uptime</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="evJoin" aria-labelledby="lbl-join">0</div>
+          <div class="stat-label" id="lbl-join">เข้าห้อง</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="evLeave" aria-labelledby="lbl-leave">0</div>
+          <div class="stat-label" id="lbl-leave">ออกห้อง</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="evMute" aria-labelledby="lbl-mute">0</div>
+          <div class="stat-label" id="lbl-mute">Mute</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="evDeaf" aria-labelledby="lbl-deaf">0</div>
+          <div class="stat-label" id="lbl-deaf">Deaf</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="evStream" aria-labelledby="lbl-stream">0</div>
+          <div class="stat-label" id="lbl-stream">Stream</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="evVideo" aria-labelledby="lbl-video">0</div>
+          <div class="stat-label" id="lbl-video">กล้อง</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 2. การแจ้งเตือน -->
+    <section class="card owner-only" id="ct-announce-section" aria-labelledby="ct-announce">
+      <div class="card-header">
+        <div class="card-icon yellow" aria-hidden="true">🔔</div>
+        <h2 class="card-title" id="ct-announce">การแจ้งเตือน</h2>
+        <span style="font-size:11px;color:var(--yellow);font-weight:600"><span aria-hidden="true">👑</span> Owner</span>
+      </div>
+      <div class="card-body">
+        <div class="toggle-grid" id="toggleGrid"></div>
+      </div>
+    </section>
+
+    <!-- 3. ส่งมุขและ Trivia -->
+    <section class="card owner-only" id="ct-content-section" aria-labelledby="ct-content">
+      <div class="card-header">
+        <div class="card-icon purple" aria-hidden="true">🎭</div>
+        <h2 class="card-title" id="ct-content">ส่งมุขและ Trivia</h2>
+        <span style="font-size:11px;color:var(--yellow);font-weight:600"><span aria-hidden="true">👑</span> Owner</span>
+      </div>
+      <div class="card-body">
+        <div class="toggle-grid" style="margin-bottom:16px">
+          <div class="toggle-item">
+            <span class="toggle-label" id="lbl_send_content">เปิดใช้งาน (รวม)</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle_send_content" aria-labelledby="lbl_send_content" onchange="toggleConfig('send_content',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="toggle-item">
+            <span class="toggle-label" id="lbl_send_jokes">ส่งมุข</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle_send_jokes" aria-labelledby="lbl_send_jokes" onchange="toggleConfig('send_jokes',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="toggle-item">
+            <span class="toggle-label" id="lbl_send_trivia">ส่งคำถาม Trivia</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle_send_trivia" aria-labelledby="lbl_send_trivia" onchange="toggleConfig('send_trivia',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="config-grid" id="numGrid"></div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="saveNums()">บันทึก</button></div>
+      </div>
+    </section>
+
+    <!-- 4. Channel Routing -->
+    <section class="card" id="ct-routing-section" aria-labelledby="ct-routing">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true">📡</div>
+        <h2 class="card-title" id="ct-routing">Channel Routing — ต่อ Server</h2>
+      </div>
+      <div class="card-body">
+        <div style="margin-bottom:16px">
+          <label for="guildSelect" style="font-size:12px;color:var(--muted);font-weight:500;display:block;margin-bottom:6px">เลือก Server ที่ต้องการตั้งค่า</label>
+          <select id="guildSelect" onchange="onGuildChange()" style="display:block;width:100%;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 10px;font-size:14px;cursor:pointer;font-family:inherit">
+            <option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>
+          </select>
+        </div>
+        <div class="config-grid">
+          <div class="config-item">
+            <label for="ch_voice">Voice Events</label>
+            <select id="ch_voice" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 10px;width:100%;font-size:13px;font-family:inherit"><option value="">— ยังไม่เลือก —</option></select>
+          </div>
+          <div class="config-item">
+            <label for="ch_content">มุขและ Trivia</label>
+            <select id="ch_content" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 10px;width:100%;font-size:13px;font-family:inherit"><option value="">— ยังไม่เลือก —</option></select>
+          </div>
+          <div class="config-item">
+            <label for="ch_stats">Stats (!rank, สรุป)</label>
+            <select id="ch_stats" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 10px;width:100%;font-size:13px;font-family:inherit"><option value="">— ยังไม่เลือก —</option></select>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:10px"><span aria-hidden="true">💡</span> Server ที่ไม่ได้ตั้งค่าแยก จะใช้ค่า Global แทน</div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="saveChannels()">บันทึก</button></div>
+      </div>
+    </section>
+
+    <!-- 5. Actions -->
+    <section class="card" id="ct-actions-section" aria-labelledby="ct-actions">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true">⚡</div>
+        <h2 class="card-title" id="ct-actions">การกระทำ</h2>
+      </div>
+      <div class="card-body">
+        <div class="action-grid">
+          <button class="btn btn-success" onclick="action('joke')" aria-label="ส่งมุขเทส"><span aria-hidden="true">🎯</span> ส่งมุขเทส</button>
+          <button class="btn btn-success" onclick="action('trivia')" aria-label="ส่ง Trivia เทส"><span aria-hidden="true">🧩</span> ส่ง Trivia เทส</button>
+          <button class="btn btn-primary" onclick="action('rank')" aria-label="ส่ง rank ทันที"><span aria-hidden="true">📈</span> ส่ง !rank ทันที</button>
+          <button class="btn btn-warn" onclick="action('summary')" aria-label="ส่งสรุปสัปดาห์"><span aria-hidden="true">📊</span> ส่งสรุปสัปดาห์</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 6. Heatmap -->
+    <section class="card" id="ct-heatmap-section" aria-labelledby="ct-heatmap">
+      <div class="card-header">
+        <div class="card-icon red" aria-hidden="true">🔥</div>
+        <h2 class="card-title" id="ct-heatmap">Voice Activity Heatmap — รายชั่วโมง</h2>
+      </div>
+      <div class="card-body">
+        <div class="heatmap-wrap" id="heatmapChart"></div>
+        <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+      </div>
+    </section>
+
+    <!-- 7+8. Voice Live + Stats (two col) -->
+    <div class="two-col">
+      <section class="card" id="ct-voice-section" aria-labelledby="ct-voice" style="margin-bottom:0">
+        <div class="card-header">
+          <div class="card-icon blue" aria-hidden="true">🎙️</div>
+          <h2 class="card-title" id="ct-voice">ผู้ใช้ใน Voice ตอนนี้</h2>
+        </div>
+        <div class="card-body">
+          <div class="stat-list" id="voiceList"><span class="empty-msg">ไม่มีใครอยู่</span></div>
+        </div>
+      </section>
+      <section class="card" id="ct-stats-section" aria-labelledby="ct-stats" style="margin-bottom:0">
+        <div class="card-header">
+          <div class="card-icon yellow" aria-hidden="true">🏆</div>
+          <h2 class="card-title" id="ct-stats">สถิติสัปดาห์นี้</h2>
+        </div>
+        <div class="card-body">
+          <div class="stat-list" id="statsList"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
+        </div>
+      </section>
     </div>
-    <div class="config-item"><label for="ch_stats">Stats (!rank, สรุป)</label>
-      <select id="ch_stats" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
-    </div>
-  </div>
-  <div style="font-size:12px;color:var(--muted);margin-top:8px">💡 Server ที่ไม่ได้ตั้งค่าแยก จะใช้ค่า Global แทน</div>
-  <div class="btn-row"><button class="btn btn-primary" onclick="saveChannels()">บันทึก</button></div>
-</section>
-<section class="card" aria-labelledby="ct-actions">
-  <h2 class="card-title" id="ct-actions">การกระทำ</h2>
-  <!-- #13 — action button emoji: decorative, aria-label on button carries meaning -->
-  <div class="action-grid">
-    <button class="btn btn-success" onclick="action('joke')" aria-label="ส่งมุขเทส"><span aria-hidden="true">&#127917;</span> ส่งมุขเทส</button>
-    <button class="btn btn-success" onclick="action('trivia')" aria-label="ส่ง Trivia เทส"><span aria-hidden="true">&#129300;</span> ส่ง Trivia เทส</button>
-    <button class="btn btn-primary" onclick="action('rank')" aria-label="ส่ง rank ทันที"><span aria-hidden="true">&#128200;</span> ส่ง !rank ทันที</button>
-    <button class="btn btn-warn"    onclick="action('summary')" aria-label="ส่งสรุปสัปดาห์"><span aria-hidden="true">&#128202;</span> ส่งสรุปสัปดาห์</button>
-  </div>
-</section>
-<section class="card" aria-labelledby="ct-heatmap">
-  <h2 class="card-title" id="ct-heatmap">Voice Activity Heatmap — รายชั่วโมง</h2>
-  <div class="heatmap-wrap" id="heatmapChart"></div>
-  <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
-</section>
-<div class="two-col">
-  <section class="card" aria-labelledby="ct-voice">
-    <h2 class="card-title" id="ct-voice">ผู้ใช้ใน Voice ตอนนี้</h2>
-    <div class="stat-list" id="voiceList"><span class="empty-msg">ไม่มีใครอยู่</span></div>
-  </section>
-  <section class="card" aria-labelledby="ct-stats">
-    <h2 class="card-title" id="ct-stats">สถิติสัปดาห์นี้ — คลิกชื่อดูโปรไฟล์</h2>
-    <div class="stat-list" id="statsList"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
-  </section>
-</div>
-<section class="card" aria-labelledby="ct-votes">
-  <h2 class="card-title" id="ct-votes">คะแนนมุข — 👍👎</h2>
-  <div id="votesList" style="display:grid;gap:6px"></div>
-  <div class="btn-row"><button class="btn btn-danger" onclick="resetVotes()">รีเซ็ตคะแนนทั้งหมด</button></div>
-</section>
-<section class="card owner-only" aria-labelledby="ct-spam">
-  <h2 class="card-title" id="ct-spam">⚙️ การตั้งค่าบอท — Anti-Spam <span style="font-size:11px;color:#f0b232">👑 Owner</span></h2>
-  <div class="config-grid" id="spamGrid"></div>
-  <div style="margin-top:10px;color:var(--muted);font-size:12px">บอทจะแจ้งเตือนถ้าใครเข้า-ออก Voice เกินจำนวนครั้งสูงสุดในช่วงเวลาที่กำหนด</div>
-  <div class="btn-row"><button class="btn btn-primary" onclick="saveSpam()">บันทึก</button></div>
-</section>
-<section class="card" aria-labelledby="ct-history">
-  <h2 class="card-title" id="ct-history">Session History — ล่าสุด 50 รายการ</h2>
-  <div class="history-wrap">
-    <table>
-      <!-- #14 — table caption for screen readers -->
-      <caption>ประวัติการเข้า-ออก Voice Channel ล่าสุด 50 รายการ</caption>
-      <thead><tr><th scope="col">ชื่อ</th><th scope="col">ห้อง</th><th scope="col">เข้า</th><th scope="col">ออก</th><th scope="col">นาน</th></tr></thead>
-      <tbody id="historyBody"><tr><td colspan="5" style="color:var(--muted)">ยังไม่มีข้อมูล</td></tr></tbody>
-    </table>
-  </div>
-</section>
-<section class="card" aria-labelledby="ct-logs">
-  <h2 class="card-title" id="ct-logs" style="display:flex;align-items:center;justify-content:space-between">
-    <span>Bot Logs — ล่าสุด 100 บรรทัด</span>
-    <button class="btn btn-primary" style="padding:10px 14px;font-size:12px;min-height:44px" onclick="loadLogs()"><span aria-hidden="true">&#8635;</span> Refresh</button>
-  </h2>
-  <div id="logBox" role="log" aria-live="polite" aria-label="Bot logs" style="background:var(--bg);border-radius:6px;padding:12px;font-family:monospace;font-size:12px;color:var(--muted);max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">กำลังโหลด...</div>
-</section>
-</main>
-<!-- #4 — toast is a live region so screen readers announce it -->
+
+    <!-- 9. Votes -->
+    <section class="card" id="ct-votes-section" aria-labelledby="ct-votes">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true">👍</div>
+        <h2 class="card-title" id="ct-votes">คะแนนมุข</h2>
+      </div>
+      <div class="card-body">
+        <div id="votesList" style="display:grid;gap:6px"></div>
+        <div class="btn-row"><button class="btn btn-danger" onclick="resetVotes()">รีเซ็ตคะแนนทั้งหมด</button></div>
+      </div>
+    </section>
+
+    <!-- 10. Anti-Spam -->
+    <section class="card owner-only" id="ct-spam-section" aria-labelledby="ct-spam">
+      <div class="card-header">
+        <div class="card-icon red" aria-hidden="true">🛡️</div>
+        <h2 class="card-title" id="ct-spam">Anti-Spam</h2>
+        <span style="font-size:11px;color:var(--yellow);font-weight:600"><span aria-hidden="true">👑</span> Owner</span>
+      </div>
+      <div class="card-body">
+        <div class="config-grid" id="spamGrid"></div>
+        <div style="margin-top:10px;color:var(--muted);font-size:12px">บอทจะแจ้งเตือนถ้าใครเข้า-ออก Voice เกินจำนวนครั้งสูงสุดในช่วงเวลาที่กำหนด</div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="saveSpam()">บันทึก</button></div>
+      </div>
+    </section>
+
+    <!-- 11. Session History -->
+    <section class="card" id="ct-history-section" aria-labelledby="ct-history">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true">📋</div>
+        <h2 class="card-title" id="ct-history">Session History — ล่าสุด 50 รายการ</h2>
+      </div>
+      <div class="card-body" style="padding:0">
+        <div class="history-wrap">
+          <table>
+            <caption>ประวัติการเข้า-ออก Voice Channel ล่าสุด 50 รายการ</caption>
+            <thead><tr>
+              <th scope="col">ชื่อ</th>
+              <th scope="col">ห้อง</th>
+              <th scope="col">เข้า</th>
+              <th scope="col">ออก</th>
+              <th scope="col">นาน</th>
+            </tr></thead>
+            <tbody id="historyBody"><tr><td colspan="5" style="color:var(--muted);padding:16px">ยังไม่มีข้อมูล</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- 12. Bot Logs -->
+    <section class="card" id="ct-logs-section" aria-labelledby="ct-logs">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true">🖥️</div>
+        <h2 class="card-title" id="ct-logs">Bot Logs — ล่าสุด 100 บรรทัด</h2>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadLogs()"><span aria-hidden="true">↻</span> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="logBox" role="log" aria-live="polite" aria-label="Bot logs">กำลังโหลด...</div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer id="appFooter">AjarnBot · Built with discord.py + Flask · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank" aria-label="GitHub repository เปิดในแท็บใหม่">GitHub</a></footer>
+
+</div><!-- /main-wrapper -->
+</div><!-- /app-layout -->
+
+<!-- Toast -->
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
 <script>window.CURRENT_GUILD_ID = '{{ current_guild_id }}';</script>
 <script src="/static/script.js"></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}</script>
-<!-- #18 — footer moved inside body (was outside </body>, invalid HTML) -->
-<footer id="appFooter">AjarnBot · Built with discord.py + Flask · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a></footer>
 </body>
 </html>

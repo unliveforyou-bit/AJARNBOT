@@ -296,6 +296,18 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.3.0 — Dashboard Redesign (GitHub Dark + Sidebar Layout)
+> Complete visual overhaul — GitHub Dark aesthetic, fixed sidebar navigation, Geist typography
+
+- 🎨 **Design system** — CSS custom properties: `--bg:#0d1117`, `--surface:#161b22`, `--card:#21262d`, `--accent:#58a6ff`, `--green:#3fb950`, `--red:#f85149`
+- 🔤 **Typography** — Geist + Geist Mono from Google Fonts; monospace stat values with `letter-spacing:-0.04em`
+- 🗂️ **Sidebar navigation** — fixed 220px sidebar with 4 section groups, scroll spy active state, mobile hamburger toggle
+- 📊 **Borderless stats grid** — `display:grid; gap:1px; background:var(--border)` pattern (Apple-style cell separation)
+- 💎 **Glassmorphism header** — `backdrop-filter:blur(12px)` sticky header with rgba background
+- 🌙 **Light mode** — full token override (`--bg:#f6f8fa`, `--accent:#0969da`) with `body.light` class
+- 📱 **Mobile responsive** — sidebar `transform:translateX(-100%)` + overlay dismiss + `margin-left:0` on mobile
+- ♿ **A11y preserved** — all existing JS IDs, aria-live regions, aria-labelledby pairs, and WCAG fixes intact
+
 ### v2.2.0 — Accessibility Round 2 (29 more WCAG 2.1 AA fixes)
 > 29 additional issues fixed — contrast, semantics, keyboard, touch targets, error handling
 

@@ -317,6 +317,36 @@ async function loadLogs(){
   }
 }
 if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');const btn=document.getElementById('themeBtn');btn.innerHTML='<span aria-hidden="true">☀️</span>';btn.setAttribute('aria-label','สลับธีม');}
+
+// ── Sidebar navigation ──
+function toggleSidebar(){
+  const sb=document.getElementById('sidebar');
+  const ov=document.getElementById('sidebarOverlay');
+  const btn=document.getElementById('menuToggle');
+  const open=sb.classList.toggle('open');
+  ov.classList.toggle('active',open);
+  btn.setAttribute('aria-expanded',String(open));
+}
+function closeSidebar(){
+  const sb=document.getElementById('sidebar');
+  const ov=document.getElementById('sidebarOverlay');
+  const btn=document.getElementById('menuToggle');
+  sb.classList.remove('open');
+  ov.classList.remove('active');
+  if(btn)btn.setAttribute('aria-expanded','false');
+}
+// Highlight active sidebar link on scroll
+function updateSidebarActive(){
+  const links=document.querySelectorAll('.sidebar-nav a[href^="#"]');
+  const sections=[...links].map(a=>document.querySelector(a.getAttribute('href'))).filter(Boolean);
+  let active=null;
+  sections.forEach((s,i)=>{if(s&&s.getBoundingClientRect().top<=80)active=i;});
+  links.forEach((l,i)=>{l.classList.toggle('active',i===active);});
+}
+window.addEventListener('scroll',updateSidebarActive,{passive:true});
+// Close sidebar on ESC
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
+
 buildUI();loadConfig();loadGuilds();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
 updateClock();setInterval(updateClock,1000);
 setInterval(loadLogs,30000);
