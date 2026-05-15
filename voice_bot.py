@@ -917,19 +917,23 @@ def oauth_callback():
             'code': code,
             'redirect_uri': DISCORD_REDIRECT_URI,
         }).encode()
+        UA = 'AjarnBot/1.0 (https://ajarnbot.up.railway.app)'
         req = urllib.request.Request('https://discord.com/api/oauth2/token', data=data,
-                                      headers={'Content-Type': 'application/x-www-form-urlencoded'})
+                                      headers={'Content-Type': 'application/x-www-form-urlencoded',
+                                               'User-Agent': UA})
         with urllib.request.urlopen(req, timeout=10) as resp:
             token_data = json.loads(resp.read().decode())
         access_token = token_data['access_token']
         # Get user info
         req2 = urllib.request.Request('https://discord.com/api/v10/users/@me',
-                                       headers={'Authorization': f'Bearer {access_token}'})
+                                       headers={'Authorization': f'Bearer {access_token}',
+                                                'User-Agent': UA})
         with urllib.request.urlopen(req2, timeout=10) as resp2:
             user = json.loads(resp2.read().decode())
         # Get user guilds
         req3 = urllib.request.Request('https://discord.com/api/v10/users/@me/guilds',
-                                       headers={'Authorization': f'Bearer {access_token}'})
+                                       headers={'Authorization': f'Bearer {access_token}',
+                                                'User-Agent': UA})
         with urllib.request.urlopen(req3, timeout=10) as resp3:
             all_guilds = json.loads(resp3.read().decode())
         # Filter to guilds where bot is present
