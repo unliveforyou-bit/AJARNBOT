@@ -3,8 +3,8 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '2.4.0'
-APP_BUILD_DATE = '2026-05-15'
+APP_VERSION = '2.7.0'
+APP_BUILD_DATE = '2026-05-16'
 import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
