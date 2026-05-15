@@ -115,7 +115,12 @@ cd AJARNBOT
 
 ```
 AJARNBOT/
-├── voice_bot.py          # Bot หลัก + Flask dashboard (all-in-one)
+├── voice_bot.py          # Bot หลัก + Flask routes (Python only)
+├── templates/            # Flask HTML templates (Jinja2)
+│   ├── dashboard.html    # หน้า dashboard หลัก
+│   ├── login.html        # หน้า login (Discord OAuth + password)
+│   ├── select_server.html # หน้าเลือก server
+│   └── profile.html      # หน้าโปรไฟล์ member
 ├── jokes.txt             # ไฟล์มุข (แก้เพิ่มได้เลย)
 ├── trivia.txt            # ไฟล์คำถาม Trivia
 ├── requirements.txt      # Python dependencies
@@ -128,7 +133,7 @@ AJARNBOT/
     ├── joke_votes.json
     ├── trivia_scores.json
     ├── bot_config.json
-    └── guild_configs.json  # Per-guild channel settings (multi-guild)
+    └── guild_configs.json  # Per-guild channel settings
 ```
 
 ---
@@ -246,6 +251,17 @@ tzdata>=2024.1
 - ⏰ **Real-time clock** และ anti-spam settings บน dashboard
 - 🔒 `FLASK_SECRET` env var — session key คงที่ข้ามการ deploy
 - 🌐 Domain เปลี่ยนเป็น `ajarnbot.up.railway.app`
+- 📋 **Channel routing dropdown** — เลือก channel ชื่อจริงแทนพิมพ์ ID
+- 🔐 **Admin-only server filter** — dropdown แสดงเฉพาะ server ที่มีสิทธิ์ Admin
+- ➕ `/api/channels` endpoint — ดึง text channels จาก bot
+
+### v1.6.0 — Code Quality (Gemini Review)
+> `21c3e7f` · Thread safety, Templates, Logging
+
+- 🔒 **Thread safety** — เพิ่ม `threading.Lock()` ทุก file write operation ป้องกัน race condition
+- 📁 **Flask Templates** — แยก HTML ออกจาก Python เป็น `templates/*.html` (Jinja2)
+- ⚠️ **Startup validation** — แจ้งเตือนทันทีถ้าไม่ตั้งค่า `FLASK_SECRET`
+- 🐛 **Fix silent exceptions** — `except: pass` → `except as e: log(...)` ทุกจุด
 
 ---
 
@@ -257,7 +273,8 @@ tzdata>=2024.1
 | `DISCORD_CLIENT_ID` ผิด | Railway ใส่ค่าเป็น `Client ID` ตัวอักษรแทน ID จริง | ✅ แก้แล้ว |
 | OAuth callback 403 Forbidden | `urllib.request` ไม่ส่ง `User-Agent` → Discord block | ✅ แก้แล้ว |
 | OAuth เด้งกลับ login | State mismatch เพราะ SameSite cookie / session loss | ✅ แก้แล้ว (SESSION_COOKIE_SAMESITE=Lax) |
-| OAuth callback ยังมีปัญหา | `DISCORD_CLIENT_SECRET` อาจผิด / redirect_uri ไม่ตรง | 🔄 กำลังตรวจสอบ |
+| Race condition JSON corrupt | หลาย thread เขียนไฟล์พร้อมกัน | ✅ แก้แล้ว (threading.Lock) |
+| OAuth DISCORD_CLIENT_SECRET | ยังไม่ได้ verify ว่าตรงกับ Developer Portal | 🔄 ตรวจสอบ |
 
 ---
 
