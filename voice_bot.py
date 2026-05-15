@@ -195,8 +195,9 @@ def save_history():
 # ===========================
 
 # ===== Joke Votes =====
-joke_votes       = {}
-active_joke_msgs = {}
+joke_votes          = {}
+active_joke_msgs    = {}
+active_joke_channels = set()   # channel_ids ที่กำลัง deliver joke อยู่ (ป้องกันซ้อน)
 
 def load_votes():
     global joke_votes
@@ -371,16 +372,24 @@ def get_guild_ch(guild_id, ch_type):
     return client.get_channel(int(cid)) if cid else None
 
 async def send_joke_with_vote(channel, category, joke):
-    if '?' in joke:
-        parts = joke.split('?', 1)
-        await channel.send(f'[{category}] {parts[0].strip()}?')
-        await asyncio.sleep(bot_config['joke_delay'])
-        msg = await channel.send(parts[1].strip())
-    else:
-        msg = await channel.send(f'[{category}] {joke}')
-    await msg.add_reaction('👍')
-    await msg.add_reaction('👎')
-    register_joke_msg(msg.id, joke)
+    # ป้องกันส่ง joke ซ้อนกันใน channel เดียวกัน
+    if channel.id in active_joke_channels:
+        log(f'send_joke_with_vote: skipped — joke already in progress in channel {channel.id}')
+        return
+    active_joke_channels.add(channel.id)
+    try:
+        if '?' in joke:
+            parts = joke.split('?', 1)
+            await channel.send(f'[{category}] {parts[0].strip()}?')
+            await asyncio.sleep(bot_config['joke_delay'])
+            msg = await channel.send(parts[1].strip())
+        else:
+            msg = await channel.send(f'[{category}] {joke}')
+        await msg.add_reaction('👍')
+        await msg.add_reaction('👎')
+        register_joke_msg(msg.id, joke)
+    finally:
+        active_joke_channels.discard(channel.id)
 
 async def send_leaderboard(channel, combined=None, guild_id=None):
     if combined is None:
@@ -417,6 +426,13 @@ async def send_weekly_summary(channel=None):
     await channel.send('\n'.join(lines))
 
 async def _post_trivia(channel, trivia_list=None):
+    # ป้องกันส่ง trivia ซ้อนกันใน channel เดียวกัน
+    if channel.id in active_trivia:
+        log(f'_post_trivia: skipped — trivia already active in channel {channel.id}')
+        return
+    if channel.id in active_joke_channels:
+        log(f'_post_trivia: skipped — joke in progress in channel {channel.id}')
+        return
     if trivia_list is None:
         trivia_list = load_trivia()
     if not trivia_list:
