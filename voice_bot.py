@@ -757,6 +757,9 @@ async def on_voice_state_update(member, before, after):
 # ===== Flask Dashboard =====
 flask_app = Flask(__name__)
 flask_app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
+flask_app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+flask_app.config['SESSION_COOKIE_SECURE'] = True
+flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 def require_auth(f):
     @wraps(f)
@@ -893,7 +896,17 @@ def login_discord():
 def oauth_callback():
     code = request.args.get('code')
     state = request.args.get('state')
-    if not code or state != flask_session.get('oauth_state'):
+    error = request.args.get('error')
+    if error:
+        log(f'Discord OAuth denied: {error} — {request.args.get("error_description", "")}')
+        return redirect('/login')
+    if not code:
+        log('Discord OAuth callback: no code received')
+        return redirect('/login')
+    # State check — warn only (SameSite cookie issue can cause session loss)
+    expected_state = flask_session.get('oauth_state')
+    if expected_state and state != expected_state:
+        log(f'Discord OAuth state mismatch: got {state}, expected {expected_state}')
         return redirect('/login')
     try:
         # Exchange code for token
@@ -928,8 +941,9 @@ def oauth_callback():
         flask_session['current_guild_id'] = user_guilds[0]['id'] if len(user_guilds) == 1 else ''
         return redirect('/select-server' if len(user_guilds) != 1 else '/')
     except Exception as e:
-        log(f'Discord OAuth error: {e}')
-        return redirect('/login')
+        import traceback
+        log(f'Discord OAuth error: {e}\n{traceback.format_exc()}')
+        return redirect('/login?oauth_error=1')
 
 @flask_app.route('/select-server')
 def select_server():
