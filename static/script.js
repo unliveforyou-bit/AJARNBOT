@@ -76,9 +76,9 @@ function applyOwnerUI(owner){
 async function loadConfig(){
   document.querySelector('main').setAttribute('aria-busy','true');
   try{
+    // Always fetch global config first — for is_owner flag + version info
     const r=await fetch('/api/config');
     const c=await r.json();
-    applyConfig(c);
     applyOwnerUI(!!c.is_owner);
     if(c.app_version){
       const ft=document.getElementById('appFooter');
@@ -87,6 +87,16 @@ async function loadConfig(){
         +' · Built with discord.py + Flask'
         +' · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a>';
     }
+    if(currentGuildId){
+      // Apply effective per-guild config (guild overrides + global fallback)
+      const gr=await fetch('/api/guild-config?guild_id='+currentGuildId);
+      const gc=await gr.json();
+      applyConfig(gc);
+    }else{
+      applyConfig(c);
+    }
+    // Load guilds after isOwner is known
+    await loadGuilds();
   }finally{
     document.querySelector('main').setAttribute('aria-busy','false');
   }
@@ -118,12 +128,17 @@ async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStat
 }
 async function loadGuilds(){
   try{
-    const r=await fetch('/api/guilds');const guilds=await r.json();
-    // populate config-area guildSelect
+    const r=await fetch('/api/my-guilds');const guilds=await r.json();
+    // populate config-area guildSelect — show "Global" only for owners
     const sel=document.getElementById('guildSelect');
-    sel.innerHTML='<option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>'+guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+    const globalOpt=isOwner?'<option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>':'';
+    sel.innerHTML=globalOpt+guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
     if(currentGuildId){sel.value=currentGuildId;await onGuildChange();}
-    else{await loadGlobalChannels();}
+    else if(isOwner){await loadGlobalChannels();}
+    else if(guilds.length>0){
+      // Non-owner: auto-select first guild
+      currentGuildId=guilds[0].id;sel.value=currentGuildId;await onGuildChange();
+    }
     // populate header guild switcher
     const sw=document.getElementById('guildSwitcher');
     sw.innerHTML='<option value="">— เลือก Server —</option>'+guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
@@ -157,10 +172,20 @@ async function onGuildChange(){
   const cfg=await r.json();
   await loadChannelDropdowns(currentGuildId,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
 }
+function configEndpoint(extraBody={}){
+  // Route saves: guild-config when guild selected, global config when owner + no guild
+  if(currentGuildId){
+    return ['/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({guild_id:currentGuildId,...extraBody})}];
+  }
+  return ['/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(extraBody)}];
+}
 async function toggleConfig(key,val){
   const p={};p[key]=val;
   try{
-    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    const [url,opts]=configEndpoint(p);
+    await fetch(url,opts);
     showToast('บันทึกแล้ว');
   }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
 }
@@ -168,7 +193,8 @@ async function saveNums(btn){
   withLoading(btn,async()=>{
     const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
     try{
-      await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+      const [url,opts]=configEndpoint(p);
+      await fetch(url,opts);
       showToast('บันทึกแล้ว');
     }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
   });
@@ -177,7 +203,8 @@ async function saveSpam(btn){
   withLoading(btn,async()=>{
     const p={};SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
     try{
-      await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+      const [url,opts]=configEndpoint(p);
+      await fetch(url,opts);
       showToast('บันทึก Anti-spam แล้ว');
     }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
   });
@@ -206,21 +233,21 @@ async function action(type){
   const d=await r.json();showToast(d.ok?'ส่งแล้ว!':'เกิดข้อผิดพลาด',!d.ok);
 }
 async function refreshStatus(){
+  if(!currentGuildId)return;
   try{
-    const gp=currentGuildId?'?guild_id='+currentGuildId:'';
-    const r=await fetch('/api/status'+gp);const d=await r.json();
+    const r=await fetch('/api/status?guild_id='+currentGuildId);const d=await r.json();
+    if(d.error)return;
     const dot=document.getElementById('statusDot');
     dot.className='status-dot'+(d.online?' online':'');
     // #16 — status dot is decorative shape; dynamic aria-label conveys state
     dot.setAttribute('aria-label',d.online?'บอทออนไลน์':'บอทออฟไลน์');
     document.getElementById('statusLabel').textContent=d.online?'ออนไลน์':'ออฟไลน์';
     document.getElementById('upVal').textContent=d.uptime||'-';
-    document.getElementById('evJoin').textContent=d.event_counts.join||0;
-    document.getElementById('evLeave').textContent=d.event_counts.leave||0;
-    document.getElementById('evMute').textContent=d.event_counts.mute||0;
-    document.getElementById('evDeaf').textContent=d.event_counts.deaf||0;
-    document.getElementById('evStream').textContent=d.event_counts.stream||0;
-    document.getElementById('evVideo').textContent=d.event_counts.video||0;
+    // event_counts are global totals — hide them in multi-guild mode
+    const ec=d.event_counts||{};
+    ['evJoin','evLeave','evMute','evDeaf','evStream','evVideo'].forEach(id=>{
+      const el=document.getElementById(id);if(el)el.textContent='—';
+    });
     const vl=document.getElementById('voiceList');
     if(d.voice_users.length===0){
       vl.innerHTML='<span class="empty-msg">ไม่มีใครอยู่</span>';
@@ -267,7 +294,6 @@ async function refreshStatus(){
 async function loadHeatmap(){
   const gp=currentGuildId?'?guild_id='+currentGuildId:'';
   const r=await fetch('/api/heatmap'+gp);const d=await r.json();
-  // flatten multi-guild heatmap: sum all guilds
   const flat={};
   for(let h=0;h<24;h++)flat[String(h)]=0;
   if(typeof Object.values(d)[0]==='object'){
@@ -275,22 +301,50 @@ async function loadHeatmap(){
   } else {
     for(let h=0;h<24;h++)flat[String(h)]=Number(d[String(h)]||0);
   }
-  const max=Math.max(...Object.values(flat).map(Number),1);
-  const chart=document.getElementById('heatmapChart');chart.innerHTML='';
-  const bars=[];
-  for(let h=0;h<24;h++){
-    const count=Number(flat[String(h)]||0);const pct=Math.round((count/max)*100);
-    const bar=document.createElement('div');bar.className='heatmap-bar';
-    bar.style.background='rgba(88,101,242,'+(0.15+(pct/100)*0.85).toFixed(2)+')';
-    const hLabel=String(h).padStart(2,'0')+':00 — '+count+' joins';
-    bar.title=hLabel;
-    bar.setAttribute('role','img');bar.setAttribute('aria-label',hLabel);
-    bar.setAttribute('tabindex','0');
-    chart.appendChild(bar);
-    bars.push({el:bar,scale:Math.max(pct,2)/100});
+  const values=Array.from({length:24},(_,h)=>Number(flat[String(h)]));
+  const max=Math.max(...values,1);
+  const total=values.reduce((a,b)=>a+b,0);
+  const peakH=values.indexOf(Math.max(...values));
+
+  // Color interpolation: dark navy → discord blue → soft violet
+  function heatColor(pct){
+    if(pct===0)return '#1a2436';
+    if(pct<0.5){const t=pct*2;return`rgb(${Math.round(0x1e+(0x58-0x1e)*t)},${Math.round(0x3a+(0x65-0x3a)*t)},${Math.round(0x5f+(0xf2-0x5f)*t)}`+')';}
+    const t=(pct-0.5)*2;return`rgb(${Math.round(0x58+(0xa7-0x58)*t)},${Math.round(0x65+(0x8b-0x65)*t)},${Math.round(0xf2+(0xfa-0xf2)*t)})`;
   }
-  // rAF ensures initial scaleY(0.02) from CSS renders first → transition fires
-  requestAnimationFrame(()=>{bars.forEach(({el,scale})=>{el.style.transform='scaleY('+scale+')';});});
+
+  const chart=document.getElementById('heatmapChart');chart.innerHTML='';
+
+  // Summary row
+  const summary=document.createElement('div');summary.className='heatmap-summary';
+  if(total){
+    summary.innerHTML=`<span style="display:flex;align-items:center;gap:5px"><i class="ph-bold ph-lightning" style="color:var(--accent)"></i>Peak <strong>${String(peakH).padStart(2,'0')}:00</strong>&nbsp;·&nbsp;${values[peakH]} joins</span><span class="hm-total">${total.toLocaleString()} joins รวม</span>`;
+  } else {
+    summary.innerHTML='<span>ยังไม่มีข้อมูล Heatmap</span>';
+  }
+  chart.appendChild(summary);
+
+  // Bar columns
+  const barsWrap=document.createElement('div');barsWrap.className='heatmap-bars';
+  const animated=[];
+  for(let h=0;h<24;h++){
+    const count=values[h];const pct=count/max;const isPeak=h===peakH&&count>0;
+    const col=document.createElement('div');col.className='heatmap-col';
+    const barArea=document.createElement('div');barArea.className='heatmap-bar-area';
+    const bar=document.createElement('div');
+    bar.className='heatmap-bar'+(isPeak?' peak':'');
+    bar.style.background=heatColor(pct);
+    const hLabel=String(h).padStart(2,'0')+':00 — '+count+' joins';
+    bar.title=hLabel;bar.setAttribute('role','img');bar.setAttribute('aria-label',hLabel);bar.setAttribute('tabindex','0');
+    barArea.appendChild(bar);
+    const lbl=document.createElement('div');lbl.className='heatmap-hour-label';
+    lbl.textContent=(h%3===0)?String(h).padStart(2,'0'):'';
+    col.appendChild(barArea);col.appendChild(lbl);
+    barsWrap.appendChild(col);
+    animated.push({el:bar,scale:Math.max(pct,0.02)});
+  }
+  chart.appendChild(barsWrap);
+  requestAnimationFrame(()=>{animated.forEach(({el,scale})=>{el.style.transform='scaleY('+scale+')';});});
 }
 async function loadContribGraph(){
   const gp=currentGuildId?'?guild_id='+currentGuildId+'&days=365':'?days=365';
@@ -302,10 +356,9 @@ async function loadContribGraph(){
     const users=Object.entries(data);
     if(!users.length){container.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
 
-    // Build 53-week date grid (Sunday-based, like GitHub)
+    // 53-week Sunday-based grid (GitHub style)
     const today=new Date();today.setHours(0,0,0,0);
-    const todayDow=today.getDay(); // 0=Sun
-    // Start from the Sunday 52 full weeks ago
+    const todayDow=today.getDay();
     const startDate=new Date(today);
     startDate.setDate(today.getDate()-todayDow-52*7);
     const totalCells=53*7;
@@ -315,47 +368,66 @@ async function loadContribGraph(){
       allDates.push(d.toISOString().split('T')[0]);
     }
 
+    // Month labels: position at column where month changes
+    const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const CELL_W=16; // 13px cell + 3px gap
+    const monthLabels=[];
+    allDates.forEach((dateStr,i)=>{
+      const dt=new Date(dateStr);const col=Math.floor(i/7);
+      if(dt.getDate()<=7&&!monthLabels.find(m=>m.col===col)){
+        monthLabels.push({col,label:MONTHS[dt.getMonth()]});
+      }
+    });
+    const monthRowHTML=monthLabels.map(m=>`<span class="contrib-month-lbl" style="left:${m.col*CELL_W}px">${m.label}</span>`).join('');
+    const totalColsW=53*CELL_W-3; // subtract last gap
+
+    // Day-of-week labels: show Mon, Wed, Fri only (rows 1,3,5)
+    const DOWS=['','Mon','','Wed','','Fri',''];
+    const dowHTML=DOWS.map(d=>`<span>${d}</span>`).join('');
+
+    const legendCells=['l0','l1','l2','l3','l4'].map(l=>`<div class="contrib-cell ${l}" style="width:13px;height:13px"></div>`).join('');
+
     const html=users.map(([uid,udata])=>{
       const dateMap=udata.dates||{};
       const totalJoins=Object.values(dateMap).reduce((a,b)=>a+b,0);
-      const maxVal=Math.max(...Object.values(dateMap),1);
+      const activeDays=Object.keys(dateMap).length;
+      const maxVal=Math.max(...Object.values(dateMap).map(Number),1);
+      const initial=(udata.name||'?').charAt(0).toUpperCase();
+
       function level(count){
-        if(!count||count===0)return 'l0';
-        const r=count/maxVal;
-        if(r<=0.25)return 'l1';
-        if(r<=0.50)return 'l2';
-        if(r<=0.75)return 'l3';
-        return 'l4';
+        if(!count)return 'l0';const rv=count/maxVal;
+        if(rv<=0.25)return 'l1';if(rv<=0.50)return 'l2';if(rv<=0.75)return 'l3';return 'l4';
       }
       const cells=allDates.map(key=>{
-        const dt=new Date(key);
-        const isFuture=dt>today;
-        const count=dateMap[key]||0;
+        const dt=new Date(key);const isFuture=dt>today;const count=dateMap[key]||0;
         const lbl=dt.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'2-digit'});
         const tip=lbl+(count?' · '+count+' joins':' · ไม่มีกิจกรรม');
-        const cls=isFuture?'lx':level(count);
-        return '<div class="contrib-cell '+cls+'" title="'+tip+'"></div>';
+        return`<div class="contrib-cell ${isFuture?'lx':level(count)}" title="${tip}"></div>`;
       }).join('');
 
-      const activeDays=Object.keys(dateMap).length;
-      return '<div class="contrib-user-block">'
-        +'<div class="contrib-user-header">'
-        +'<span class="contrib-user-name">'+udata.name+'</span>'
-        +'<span class="contrib-user-total">'+totalJoins+' joins · '+activeDays+' วัน</span>'
-        +'</div>'
-        +'<div class="contrib-grid-wrap"><div class="contrib-grid">'+cells+'</div></div>'
-        +'</div>';
+      return`<div class="contrib-user-block">
+        <div class="contrib-user-header">
+          <div class="contrib-avatar">${initial}</div>
+          <div class="contrib-user-info">
+            <span class="contrib-user-name">${udata.name}</span>
+            <div class="contrib-user-badges">
+              <span class="contrib-badge accent">${totalJoins.toLocaleString()} joins</span>
+              <span class="contrib-badge">${activeDays} วันที่ active</span>
+            </div>
+          </div>
+        </div>
+        <div class="contrib-graph-outer">
+          <div class="contrib-month-row" style="width:${totalColsW}px">${monthRowHTML}</div>
+          <div class="contrib-body-row">
+            <div class="contrib-dow-labels">${dowHTML}</div>
+            <div class="contrib-grid-wrap"><div class="contrib-grid">${cells}</div></div>
+          </div>
+        </div>
+      </div>`;
     }).join('');
 
     container.innerHTML=html
-      +'<div class="contrib-legend">น้อย'
-      +'<div class="contrib-legend-cells">'
-      +'<div class="contrib-cell l0" style="width:11px;height:11px;border-radius:2px"></div>'
-      +'<div class="contrib-cell l1" style="width:11px;height:11px;border-radius:2px"></div>'
-      +'<div class="contrib-cell l2" style="width:11px;height:11px;border-radius:2px"></div>'
-      +'<div class="contrib-cell l3" style="width:11px;height:11px;border-radius:2px"></div>'
-      +'<div class="contrib-cell l4" style="width:11px;height:11px;border-radius:2px"></div>'
-      +'</div>มาก</div>';
+      +`<div class="contrib-legend">น้อย<div class="contrib-legend-cells">${legendCells}</div>มาก</div>`;
   }catch(e){
     if(container)container.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';
   }
@@ -442,7 +514,8 @@ window.addEventListener('scroll',updateSidebarActive,{passive:true});
 // Close sidebar on ESC
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
 
-buildUI();loadConfig();loadGuilds();refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();loadLogs();
+buildUI();loadConfig();refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();loadLogs();
+// Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
 setInterval(loadLogs,30000);
 setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);setInterval(loadContribGraph,120000);

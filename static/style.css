@@ -468,17 +468,34 @@ input[type=number]::-webkit-inner-spin-button { opacity:0.4; }
 .action-grid { display:flex; flex-wrap:wrap; gap:8px; }
 
 /* ── Heatmap ── */
-.heatmap-wrap { display:flex; align-items:flex-end; gap:3px; height:80px; }
-.heatmap-bar {
-  flex:1;
-  border-radius:3px 3px 0 0;
-  height:100%;
-  transform-origin:bottom;
-  transform:scaleY(0.02);
-  transition:transform 0.5s cubic-bezier(0.22,1,0.36,1);
+.heatmap-wrap { display:flex; flex-direction:column; gap:10px; }
+.heatmap-summary {
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:12px; color:var(--muted); padding:0 2px;
 }
+.heatmap-summary strong { color:var(--accent); font-weight:600; }
+.hm-total {
+  background:var(--accent-subtle); color:var(--accent);
+  border:1px solid var(--accent-border); border-radius:20px;
+  padding:2px 9px; font-size:11px; font-weight:600;
+}
+.heatmap-bars { display:flex; align-items:flex-end; gap:2px; height:110px; padding:0 1px; }
+.heatmap-col { flex:1; display:flex; flex-direction:column; align-items:center; height:100%; }
+.heatmap-bar-area { flex:1; width:100%; display:flex; align-items:flex-end; }
+.heatmap-bar {
+  width:100%; border-radius:3px 3px 0 0; min-height:2px;
+  transform-origin:bottom; transform:scaleY(0.02);
+  transition:transform 0.55s cubic-bezier(0.22,1,0.36,1), filter 0.2s;
+  cursor:default;
+}
+.heatmap-bar:hover { filter:brightness(1.3); }
 .heatmap-bar:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-.heatmap-labels { display:flex; justify-content:space-between; margin-top:6px; color:var(--muted); font-size:12px; }
+.heatmap-bar.peak { box-shadow:0 0 8px rgba(88,166,255,0.30); }
+.heatmap-hour-label {
+  font-size:9px; color:var(--muted); margin-top:4px;
+  text-align:center; line-height:1; min-height:11px; user-select:none;
+}
+.heatmap-labels { display:none; }
 
 /* ── Two-col ── */
 .two-col { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
@@ -641,52 +658,67 @@ footer a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; bo
 
 /* ── GitHub Contribution Grid ── */
 .contrib-section { padding:16px 20px; }
-.contrib-user-block { margin-bottom:20px; }
-.contrib-user-block:last-child { margin-bottom:0; }
-.contrib-user-header {
-  display:flex;
-  align-items:center;
-  gap:8px;
-  margin-bottom:8px;
+.contrib-user-block { margin-bottom:26px; }
+.contrib-user-block:last-child { margin-bottom:8px; }
+.contrib-user-header { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+.contrib-avatar {
+  width:34px; height:34px; border-radius:50%; flex-shrink:0;
+  background:linear-gradient(135deg,#5865f2 0%,#a78bfa 100%);
+  display:flex; align-items:center; justify-content:center;
+  font-size:14px; font-weight:700; color:#fff; text-transform:uppercase;
+  box-shadow:0 0 0 2px rgba(88,101,242,0.25);
 }
-.contrib-user-name { font-size:13px; font-weight:600; color:var(--text); }
-.contrib-user-total { font-size:11px; color:var(--muted); }
+.contrib-user-info { display:flex; flex-direction:column; gap:4px; }
+.contrib-user-name { font-size:13px; font-weight:600; color:var(--text); line-height:1; }
+.contrib-user-badges { display:flex; gap:5px; flex-wrap:wrap; }
+.contrib-badge {
+  font-size:10px; color:var(--muted); background:var(--overlay);
+  border:1px solid var(--border); border-radius:10px; padding:1px 7px; font-weight:500;
+}
+.contrib-badge.accent {
+  color:var(--accent); background:var(--accent-subtle); border-color:var(--accent-border);
+}
+.contrib-graph-outer { overflow-x:auto; }
+.contrib-month-row {
+  position:relative; height:14px; min-width:max-content;
+  margin-left:22px; margin-bottom:3px;
+}
+.contrib-month-lbl {
+  position:absolute; font-size:9px; color:var(--muted); white-space:nowrap; top:0;
+}
+.contrib-body-row { display:flex; align-items:flex-start; gap:4px; }
+.contrib-dow-labels {
+  display:grid; grid-template-rows:repeat(7,13px); gap:3px;
+  font-size:9px; color:var(--muted); flex-shrink:0;
+  width:18px; text-align:right; line-height:13px;
+}
 .contrib-grid-wrap { overflow-x:auto; }
 .contrib-grid {
-  display:grid;
-  grid-template-rows:repeat(7,11px);
-  grid-auto-flow:column;
-  gap:2px;
-  width:max-content;
+  display:grid; grid-template-rows:repeat(7,13px);
+  grid-auto-flow:column; gap:3px; width:max-content;
 }
 .contrib-cell {
-  width:11px;
-  height:11px;
-  border-radius:2px;
-  cursor:pointer;
-  transition:opacity 0.1s ease, transform 0.1s cubic-bezier(0.22,1,0.36,1);
+  width:13px; height:13px; border-radius:2px; cursor:pointer;
+  transition:opacity 0.1s, transform 0.12s cubic-bezier(0.22,1,0.36,1);
 }
-.contrib-cell:hover { opacity:0.75; transform:scale(1.2); }
-.contrib-cell.l0 { background:rgba(88,166,255,0.07); }
-.contrib-cell.l1 { background:rgba(88,166,255,0.28); }
-.contrib-cell.l2 { background:rgba(88,166,255,0.52); }
-.contrib-cell.l3 { background:rgba(88,166,255,0.76); }
-.contrib-cell.l4 { background:rgba(88,166,255,1.00); }
+.contrib-cell:hover { opacity:0.78; transform:scale(1.35); }
+.contrib-cell.l0 { background:rgba(88,166,255,0.10); border:1px solid rgba(88,166,255,0.07); }
+.contrib-cell.l1 { background:rgba(88,166,255,0.30); }
+.contrib-cell.l2 { background:rgba(88,166,255,0.56); }
+.contrib-cell.l3 { background:rgba(88,166,255,0.80); }
+.contrib-cell.l4 { background:#58a6ff; }
 .contrib-cell.lx { background:transparent; }
 .contrib-legend {
-  display:flex;
-  align-items:center;
-  gap:4px;
-  margin-top:6px;
-  font-size:11px;
-  color:var(--muted);
+  display:flex; align-items:center; gap:5px;
+  margin-top:10px; padding-left:26px;
+  font-size:11px; color:var(--muted);
 }
 .contrib-legend-cells { display:flex; gap:2px; }
-body.light .contrib-cell.l0 { background:rgba(9,105,218,0.07); }
+body.light .contrib-cell.l0 { background:rgba(9,105,218,0.08); border-color:rgba(9,105,218,0.05); }
 body.light .contrib-cell.l1 { background:rgba(9,105,218,0.22); }
 body.light .contrib-cell.l2 { background:rgba(9,105,218,0.45); }
 body.light .contrib-cell.l3 { background:rgba(9,105,218,0.70); }
-body.light .contrib-cell.l4 { background:rgba(9,105,218,1.00); }
+body.light .contrib-cell.l4 { background:#0969da; }
 
 /* ── Disable transitions during theme switch ── */
 [data-theme-switching] * { transition:none !important; }

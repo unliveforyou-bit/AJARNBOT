@@ -25,6 +25,7 @@ _lock_hourly  = threading.Lock()
 _lock_log     = threading.Lock()
 _lock_daily      = threading.Lock()
 _lock_user_daily = threading.Lock()
+_lock_trivia     = threading.Lock()
 # ================================
 
 THAI_TZ = ZoneInfo('Asia/Bangkok')
@@ -47,6 +48,10 @@ _FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
 if not _FLASK_SECRET_RAW:
     print('⚠️  WARNING: FLASK_SECRET not set — sessions will be invalidated on every restart!')
     print('⚠️  Set FLASK_SECRET env var in Railway to a fixed hex string (e.g. openssl rand -hex 32)')
+if OUTBOUND_WEBHOOK_URL and not OUTBOUND_WEBHOOK_URL.startswith('https://'):
+    raise ValueError(
+        f'OUTBOUND_WEBHOOK_URL must start with https:// to prevent SSRF. Got: {OUTBOUND_WEBHOOK_URL!r}'
+    )
 # =====================================
 # =================================
 
@@ -105,9 +110,10 @@ bot_config = {
 }
 
 def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, encoding='utf-8') as f:
-            bot_config.update(json.load(f))
+    with _lock_config:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, encoding='utf-8') as f:
+                bot_config.update(json.load(f))
 
 def save_config():
     with _lock_config:
@@ -116,13 +122,37 @@ def save_config():
 # ==================
 
 # ===== Per-guild Config =====
-guild_configs = {}  # {guild_id_str: {channel_voice, channel_content, channel_stats}}
+# guild_configs[guild_id_str] stores per-guild overrides.
+# Any key not set here falls back to the global bot_config default.
+# Guild admins can override: channels, announce toggles, content settings, spam params.
+# Owner-only global settings (via /api/config) serve as defaults for all guilds.
+guild_configs = {}
+
+# Keys that guild admins are allowed to set (non-owner users)
+GUILD_ADMIN_KEYS = {
+    'channel_voice', 'channel_content', 'channel_stats',
+    'announce_join', 'announce_leave', 'announce_move',
+    'announce_mute', 'announce_deaf', 'announce_stream', 'announce_video',
+    'send_content', 'send_jokes', 'send_trivia',
+    'joke_delay', 'trivia_delay', 'content_interval',
+    'summary_hour', 'joke_downvote_threshold',
+    'spam_max_events', 'spam_window_sec', 'mute_cooldown_sec',
+}
+
+def get_gc(guild_id, key, default=None):
+    """Get per-guild config value, falling back to global bot_config, then default."""
+    gid = str(guild_id) if guild_id else ''
+    val = guild_configs.get(gid, {}).get(key)
+    if val is None:
+        val = bot_config.get(key, default)
+    return val
 
 def load_guild_configs():
     global guild_configs
-    if os.path.exists(GUILD_CONFIGS_FILE):
-        with open(GUILD_CONFIGS_FILE, encoding='utf-8') as f:
-            guild_configs = json.load(f)
+    with _lock_guild:
+        if os.path.exists(GUILD_CONFIGS_FILE):
+            with open(GUILD_CONFIGS_FILE, encoding='utf-8') as f:
+                guild_configs = json.load(f)
 
 def save_guild_configs():
     with _lock_guild:
@@ -136,8 +166,8 @@ JOKES_FALLBACK = [
     "ทำไมโปรแกรมเมอร์ถึงชอบ dark mode? เพราะ light attracts bugs",
 ]
 
-def load_jokes(include_filtered=False):
-    threshold   = bot_config.get('joke_downvote_threshold', 3)
+def load_jokes(include_filtered=False, guild_id=None):
+    threshold   = get_gc(guild_id, 'joke_downvote_threshold', 3) if guild_id else bot_config.get('joke_downvote_threshold', 3)
     jokes       = []
     current_cat = 'มุขทั่วไป'
     if os.path.exists(JOKES_FILE):
@@ -188,7 +218,7 @@ def load_trivia():
 # ===== Voice Stats (Multi-guild) =====
 voice_join_times = {}   # {(guild_id, member_id): (display_name, join_time, channel_name)}
 weekly_stats     = {}   # {guild_id: {user_id: {'name': str, 'seconds': int}}}
-summary_sent     = False
+summary_sent     = {}   # {guild_id_str: bool} — tracks if summary already sent this week per guild
 
 def load_stats():
     global weekly_stats
@@ -263,13 +293,15 @@ TRIVIA_ANSWER_WINDOW = 30  # วินาที
 
 def load_trivia_scores():
     global trivia_scores
-    if os.path.exists(TRIVIA_SCORES_FILE):
-        with open(TRIVIA_SCORES_FILE, encoding='utf-8') as f:
-            trivia_scores = json.load(f)
+    with _lock_trivia:
+        if os.path.exists(TRIVIA_SCORES_FILE):
+            with open(TRIVIA_SCORES_FILE, encoding='utf-8') as f:
+                trivia_scores = json.load(f)
 
 def save_trivia_scores():
-    with open(TRIVIA_SCORES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(trivia_scores, f, ensure_ascii=False, indent=2)
+    with _lock_trivia:
+        with open(TRIVIA_SCORES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(trivia_scores, f, ensure_ascii=False, indent=2)
 # =========================
 
 # ===== Anti-spam =====
@@ -291,15 +323,23 @@ def fire_outbound_webhook(event, payload):
             log(f'Webhook error: {e}')
     threading.Thread(target=_send, daemon=True).start()
 
-def check_voice_spam(guild_id, member_id):
+def record_voice_event(guild_id, member_id):
+    """Record a voice join/leave event for spam tracking. Call once per event."""
     key = (guild_id, member_id)
     now = datetime.now(THAI_TZ)
-    spam_window = bot_config.get('spam_window_sec', SPAM_WINDOW_SEC)
-    spam_max    = bot_config.get('spam_max_events', SPAM_MAX_EVENTS)
+    spam_window = get_gc(guild_id, 'spam_window_sec', SPAM_WINDOW_SEC)
     events = voice_spam_tracker.get(key, [])
     events = [t for t in events if (now - t).total_seconds() < spam_window]
     events.append(now)
     voice_spam_tracker[key] = events
+
+def check_voice_spam(guild_id, member_id):
+    """Check if this member is spamming voice. Call AFTER record_voice_event."""
+    key = (guild_id, member_id)
+    now = datetime.now(THAI_TZ)
+    spam_window = get_gc(guild_id, 'spam_window_sec', SPAM_WINDOW_SEC)
+    spam_max    = get_gc(guild_id, 'spam_max_events', SPAM_MAX_EVENTS)
+    events = [t for t in voice_spam_tracker.get(key, []) if (now - t).total_seconds() < spam_window]
     return len(events) >= spam_max
 # =====================
 
@@ -363,10 +403,11 @@ def record_leave(guild_id, member_id):
 # ===== Cooldown =====
 mute_cooldown = {}
 
-def check_cooldown(member_id, event):
+def check_cooldown(member_id, event, guild_id=None):
     key = (member_id, event)
     now = datetime.now(THAI_TZ)
-    if key in mute_cooldown and (now - mute_cooldown[key]).total_seconds() < bot_config['mute_cooldown_sec']:
+    cooldown_sec = get_gc(guild_id, 'mute_cooldown_sec', 3) if guild_id else bot_config.get('mute_cooldown_sec', 3)
+    if key in mute_cooldown and (now - mute_cooldown[key]).total_seconds() < cooldown_sec:
         return False
     mute_cooldown[key] = now
     return True
@@ -518,9 +559,8 @@ client   = VoiceBot()
 bot_loop = None
 
 def get_guild_ch(guild_id, ch_type):
-    """Get channel for a specific guild. Falls back to global bot_config if not set per-guild."""
-    gid = str(guild_id) if guild_id else ''
-    cid = guild_configs.get(gid, {}).get(f'channel_{ch_type}') or bot_config.get(f'channel_{ch_type}')
+    """Get channel for a specific guild. Per-guild config → global default → None."""
+    cid = get_gc(guild_id, f'channel_{ch_type}')
     return client.get_channel(int(cid)) if cid else None
 
 async def send_joke_with_vote(channel, category, joke):
@@ -535,7 +575,7 @@ async def send_joke_with_vote(channel, category, joke):
             parts = joke.split('?', 1)
             setup_msg = await channel.send(f'[{category}] {parts[0].strip()}?')
             sent_msgs.append(setup_msg)
-            await asyncio.sleep(bot_config['joke_delay'])
+            await asyncio.sleep(get_gc(channel.guild.id if channel.guild else None, 'joke_delay', 15))
             msg = await channel.send(parts[1].strip())
         else:
             msg = await channel.send(f'[{category}] {joke}')
@@ -625,20 +665,23 @@ async def _post_trivia(channel, trivia_list=None):
 
 @tasks.loop(minutes=30)
 async def send_content():
-    if not bot_config['send_content']:
-        return
     # ไม่ส่งถ้าไม่มีใครอยู่ใน Voice channel เลย
     if not voice_join_times:
         return
+    # Trivia is shared (not filtered by votes) — load once
+    all_trivia = load_trivia()
     # ส่งแยกแต่ละ guild ที่มีคนใน voice
     active_guilds = set(str(gid) for (gid, _) in voice_join_times.keys())
-    trivia_list = load_trivia() if bot_config.get('send_trivia', True) else []
-    jokes = load_jokes() if bot_config.get('send_jokes', True) else []
-    if not trivia_list and not jokes:
-        return
     for gid in active_guilds:
+        # Per-guild content toggles
+        if not get_gc(gid, 'send_content', True):
+            continue
         channel = get_guild_ch(gid, 'content')
         if not channel:
+            continue
+        trivia_list = all_trivia if get_gc(gid, 'send_trivia', True) else []
+        jokes       = load_jokes(guild_id=gid) if get_gc(gid, 'send_jokes', True) else []
+        if not trivia_list and not jokes:
             continue
         if trivia_list and jokes:
             if random.random() < 0.5:
@@ -648,25 +691,26 @@ async def send_content():
                 await send_joke_with_vote(channel, category, joke)
         elif trivia_list:
             await _post_trivia(channel, trivia_list)
-        elif jokes:
+        else:
             category, joke = random.choice(jokes)
             await send_joke_with_vote(channel, category, joke)
 
 @tasks.loop(hours=1)
 async def weekly_summary_task():
-    global summary_sent
     now = datetime.now(THAI_TZ)
-    if now.weekday() == 0 and now.hour == bot_config['summary_hour']:
-        if not summary_sent:
-            for guild in client.guilds:
+    for guild in client.guilds:
+        gid = str(guild.id)
+        summary_hour = get_gc(guild.id, 'summary_hour', 9)
+        if now.weekday() == 0 and now.hour == summary_hour:
+            if not summary_sent.get(gid, False):
                 channel = get_guild_ch(guild.id, 'stats')
                 if channel:
                     await send_weekly_summary(channel)
-            weekly_stats.clear()
-            save_stats()
-            summary_sent = True
-    else:
-        summary_sent = False
+                weekly_stats.pop(gid, None)
+                save_stats()
+                summary_sent[gid] = True
+        else:
+            summary_sent[gid] = False
 
 @tasks.loop(hours=1)
 async def daily_backup_task():
@@ -710,6 +754,40 @@ async def save_event_counts_task():
     save_daily()
     save_user_daily()
 # ==================================================
+
+# ===== Periodic eviction of in-memory rate-limit dicts =====
+@tasks.loop(minutes=10)
+async def evict_stale_trackers():
+    """Remove stale entries from unbounded dicts to prevent memory leaks."""
+    now = datetime.now(THAI_TZ)
+    # Use largest possible window across guilds so we don't evict too aggressively
+    max_spam_window = max(
+        (get_gc(g.id, 'spam_window_sec', SPAM_WINDOW_SEC) for g in client.guilds),
+        default=SPAM_WINDOW_SEC
+    )
+    max_mute_ttl = max(
+        (get_gc(g.id, 'mute_cooldown_sec', 3) for g in client.guilds),
+        default=3
+    )
+
+    # voice_spam_tracker — keep only entries with at least one event in the window
+    stale_spam = [k for k, ts in list(voice_spam_tracker.items())
+                  if not any((now - t).total_seconds() < max_spam_window for t in ts)]
+    for k in stale_spam:
+        voice_spam_tracker.pop(k, None)
+
+    # mute_cooldown — keep entries younger than 10× the max cooldown
+    stale_mute = [k for k, t in list(mute_cooldown.items())
+                  if (now - t).total_seconds() > max_mute_ttl * 10]
+    for k in stale_mute:
+        mute_cooldown.pop(k, None)
+
+    # command_rate_limit — keep entries younger than 10× the command cooldown
+    stale_cmd = [k for k, t in list(command_rate_limit.items())
+                 if (now - t).total_seconds() > COMMAND_COOLDOWN_SEC * 10]
+    for k in stale_cmd:
+        command_rate_limit.pop(k, None)
+# ============================================================
 
 # ===== Feature 6: Bot status rotation =====
 _status_index = 0
@@ -773,6 +851,7 @@ async def on_ready():
     daily_backup_task.start()
     rotate_status.start()
     save_event_counts_task.start()   # ← save event_counts every 5 min
+    evict_stale_trackers.start()     # ← evict stale rate-limit dicts every 10 min
     await client.tree.sync()
 
 @client.tree.command(name="rank", description="แสดงอันดับ Voice")
@@ -853,7 +932,9 @@ async def on_message(message):
     if message.channel.id in active_trivia:
         trivia_data = active_trivia[message.channel.id]
         try:
-            expires = datetime.fromisoformat(trivia_data['expires']).replace(tzinfo=THAI_TZ)
+            _exp = datetime.fromisoformat(trivia_data['expires'])
+            # If naive datetime, localize; if already aware, convert to THAI_TZ
+            expires = _exp.replace(tzinfo=THAI_TZ) if _exp.tzinfo is None else _exp.astimezone(THAI_TZ)
         except Exception:
             expires = datetime.now(THAI_TZ)
         if datetime.now(THAI_TZ) <= expires:
@@ -911,7 +992,7 @@ async def on_raw_reaction_add(payload):
     else:
         joke_votes[joke]['down'] += 1
     save_votes()
-    threshold = bot_config.get('joke_downvote_threshold', 3)
+    threshold = get_gc(payload.guild_id, 'joke_downvote_threshold', 3)
     if emoji == '👎' and joke_votes[joke]['down'] >= threshold:
         channel = client.get_channel(payload.channel_id)
         if channel:
@@ -942,43 +1023,51 @@ async def on_voice_state_update(member, before, after):
     if channel is None:
         return
 
+    gid = member.guild.id
+
     if before.channel is None and after.channel is not None:
-        record_join(member.guild.id, member.id, member.display_name, after.channel.name)
+        record_join(gid, member.id, member.display_name, after.channel.name)
+        record_voice_event(gid, member.id)
         event_counts['join'] += 1
-        if bot_config['announce_join']:
+        if get_gc(gid, 'announce_join', True):
             await channel.send(f'{member.display_name} เข้าห้อง {after.channel.name}')
         fire_outbound_webhook('voice_join', {'user': member.display_name, 'channel': after.channel.name, 'guild': member.guild.name})
-        if check_voice_spam(member.guild.id, member.id):
-            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({SPAM_MAX_EVENTS} ครั้งใน {SPAM_WINDOW_SEC} วินาที)')
+        if check_voice_spam(gid, member.id):
+            spam_max = get_gc(gid, 'spam_max_events', SPAM_MAX_EVENTS)
+            spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
+            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
     elif before.channel is not None and after.channel is None:
-        record_leave(member.guild.id, member.id)
+        record_leave(gid, member.id)
+        record_voice_event(gid, member.id)
         event_counts['leave'] += 1
-        if bot_config['announce_leave']:
+        if get_gc(gid, 'announce_leave', True):
             await channel.send(f'{member.display_name} ออกจากห้อง {before.channel.name}')
         fire_outbound_webhook('voice_leave', {'user': member.display_name, 'channel': before.channel.name, 'guild': member.guild.name})
-        if check_voice_spam(member.guild.id, member.id):
-            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({SPAM_MAX_EVENTS} ครั้งใน {SPAM_WINDOW_SEC} วินาที)')
+        if check_voice_spam(gid, member.id):
+            spam_max = get_gc(gid, 'spam_max_events', SPAM_MAX_EVENTS)
+            spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
+            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
     elif before.channel != after.channel:
-        record_leave(member.guild.id, member.id)
-        record_join(member.guild.id, member.id, member.display_name, after.channel.name)
-        if bot_config['announce_move']:
+        record_leave(gid, member.id)
+        record_join(gid, member.id, member.display_name, after.channel.name)
+        if get_gc(gid, 'announce_move', True):
             await channel.send(f'{member.display_name} ย้ายจาก {before.channel.name} ไป {after.channel.name}')
         fire_outbound_webhook('voice_move', {'user': member.display_name, 'from': before.channel.name, 'to': after.channel.name, 'guild': member.guild.name})
 
-    if before.self_mute != after.self_mute and bot_config['announce_mute'] and check_cooldown(member.id, 'mute'):
+    if before.self_mute != after.self_mute and get_gc(gid, 'announce_mute', True) and check_cooldown(member.id, 'mute', guild_id=gid):
         event_counts['mute'] += 1
         await channel.send(f'{member.display_name} {"ปิดไมค์" if after.self_mute else "เปิดไมค์"}')
 
-    if before.self_deaf != after.self_deaf and bot_config['announce_deaf'] and check_cooldown(member.id, 'deaf'):
+    if before.self_deaf != after.self_deaf and get_gc(gid, 'announce_deaf', True) and check_cooldown(member.id, 'deaf', guild_id=gid):
         event_counts['deaf'] += 1
         await channel.send(f'{member.display_name} {"ปิดหู" if after.self_deaf else "เปิดหู"}')
 
     log(f'stream: {before.self_stream}->{after.self_stream} | video: {before.self_video}->{after.self_video}')
-    if before.self_stream != after.self_stream and bot_config['announce_stream']:
+    if before.self_stream != after.self_stream and get_gc(gid, 'announce_stream', True):
         event_counts['stream'] += 1
         await channel.send(f'{member.display_name} {"เริ่ม stream" if after.self_stream else "หยุด stream"}')
 
-    if before.self_video != after.self_video and bot_config['announce_video']:
+    if before.self_video != after.self_video and get_gc(gid, 'announce_video', True):
         event_counts['video'] += 1
         await channel.send(f'{member.display_name} {"เปิดกล้อง" if after.self_video else "ปิดกล้อง"}')
 # =======================
@@ -1037,21 +1126,43 @@ def require_guild_access(guild_id: str):
     if session_is_owner():
         return True
     return guild_id in session_admin_guild_ids()
+
+def _guild_id_or_error():
+    """
+    ดึง guild_id จาก request.args และตรวจ access.
+    คืน (guild_id_str, None) ถ้าโอเค
+    คืน (None, Response) ถ้า error — caller ต้อง return response ทันที
+    """
+    guild_id = request.args.get('guild_id', '').strip()
+    if not guild_id:
+        return None, (jsonify({'error': 'guild_id is required'}), 400)
+    if not require_guild_access(guild_id):
+        return None, (jsonify({'error': 'Forbidden'}), 403)
+    return guild_id, None
 # ========================
 
 @flask_app.route('/login', methods=['GET', 'POST'])
 def login():
     discord_btn = '<a href="/login/discord" class="btn-discord"><svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>เข้าสู่ระบบด้วย Discord</a><div class="divider">หรือ</div>' if DISCORD_CLIENT_ID else ''
-    # Hide password form if no DASHBOARD_PASSWORD set
-    show_pw = bool(DASHBOARD_PASSWORD)
+    # Password login is owner-only emergency access.
+    # Hide the form if no password is configured, or if Discord login is available
+    # (Discord login is the preferred method for all users including the owner).
+    show_pw   = bool(DASHBOARD_PASSWORD)
+    has_invite = bool(DISCORD_CLIENT_ID)   # show invite button only if bot OAuth is configured
     if request.method == 'POST':
-        if DASHBOARD_PASSWORD and hmac.compare_digest(request.form.get('password', ''), DASHBOARD_PASSWORD):
+        pw = request.form.get('password', '')
+        if DASHBOARD_PASSWORD and hmac.compare_digest(pw, DASHBOARD_PASSWORD):
             flask_session['logged_in'] = True
             flask_session['login_method'] = 'password'
+            flask_session['is_owner'] = True   # password login always = owner
             flask_session.permanent = True
             return redirect('/')
-        return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw, error_msg='<div class="err">รหัสผ่านไม่ถูกต้อง</div>')
-    return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw, error_msg='')
+        log(f'Failed password login attempt from {request.remote_addr}')
+        return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw,
+                               has_invite=has_invite,
+                               error_msg='<div class="err">รหัสผ่านไม่ถูกต้อง</div>')
+    return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw,
+                           has_invite=has_invite, error_msg='')
 
 @flask_app.route('/login/discord')
 def login_discord():
@@ -1079,9 +1190,9 @@ def oauth_callback():
     if not code:
         log('Discord OAuth callback: no code received')
         return redirect('/login')
-    # State check — warn only (SameSite cookie issue can cause session loss)
+    # State check — always enforce to prevent CSRF
     expected_state = flask_session.get('oauth_state')
-    if expected_state and state != expected_state:
+    if not expected_state or state != expected_state:
         log(f'Discord OAuth state mismatch: got {state}, expected {expected_state}')
         return redirect('/login')
     try:
@@ -1270,12 +1381,14 @@ def profile_page(uid):
 @flask_app.route('/api/status')
 @require_auth
 def api_status():
-    guild_id   = request.args.get('guild_id')
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
     online     = client.is_ready()
     uptime_sec = int((datetime.now(THAI_TZ) - start_time).total_seconds())
     voice_users = []
     for (gid, mid), (name, join_time, ch) in voice_join_times.items():
-        if guild_id and str(gid) != guild_id:
+        if str(gid) != guild_id:
             continue
         elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
         guild_obj = client.get_guild(gid)
@@ -1285,15 +1398,52 @@ def api_status():
     combined = get_stats_for_period('week', guild_id=guild_id)
     stats_sorted   = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
     weekly_display = [{'uid': k, 'name': v['name'], 'time': format_duration(v['seconds'])} for k, v in stats_sorted[:10]]
+    # event_counts is global — expose only guild-relevant subset
     return jsonify({'online': online, 'uptime': format_duration(uptime_sec),
-                    'event_counts': event_counts, 'voice_users': voice_users, 'weekly_stats': weekly_display})
+                    'voice_users': voice_users, 'weekly_stats': weekly_display})
+
+@flask_app.route('/api/my-guilds')
+@require_auth
+def api_my_guilds():
+    """
+    Return guilds where:
+    - bot is present, AND
+    - current user is admin/owner of that guild (from Discord OAuth session)
+    Owners (password login or OWNER_IDS) see all guilds the bot is in.
+    """
+    if session_is_owner():
+        guilds = [
+            {'id': str(g.id), 'name': g.name,
+             'member_count': g.member_count,
+             'icon': None}
+            for g in client.guilds
+        ]
+        return jsonify(guilds)
+    # Discord login — filter to guilds user has admin access
+    discord_guilds = flask_session.get('discord_guilds', [])
+    bot_guild_ids = {str(g.id) for g in client.guilds}
+    guilds = []
+    for dg in discord_guilds:
+        gid = dg['id']
+        if gid not in bot_guild_ids:
+            continue
+        bot_g = client.get_guild(int(gid))
+        guilds.append({
+            'id': gid,
+            'name': dg.get('name', gid),
+            'member_count': bot_g.member_count if bot_g else None,
+            'icon': dg.get('icon'),
+        })
+    return jsonify(guilds)
 
 @flask_app.route('/api/stats/<period>')
 @require_auth
 def api_stats_period(period):
     if period not in ('today', 'week', 'month'):
         return jsonify({'error': 'period must be today, week, or month'}), 400
-    guild_id = request.args.get('guild_id')
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
     data = get_stats_for_period(period, guild_id=guild_id)
     return jsonify(data)
 
@@ -1317,7 +1467,10 @@ def api_channels():
     guild_id = request.args.get('guild_id', '')
     if not guild_id:
         return jsonify([])
-    g = client.get_guild(int(guild_id))
+    try:
+        g = client.get_guild(int(guild_id))
+    except ValueError:
+        return jsonify({'error': 'invalid guild_id'}), 400
     if not g:
         return jsonify([])
     channels = [{'id': str(c.id), 'name': c.name}
@@ -1354,73 +1507,90 @@ def api_config_post():
 @flask_app.route('/api/guild-config', methods=['GET'])
 @require_auth
 def api_guild_config_get():
-    guild_id = request.args.get('guild_id', '')
-    if guild_id and not require_guild_access(guild_id):
+    guild_id = request.args.get('guild_id', '').strip()
+    if not guild_id:
+        return jsonify({'error': 'guild_id required'}), 400
+    if not require_guild_access(guild_id):
         return jsonify({'error': 'Forbidden'}), 403
-    cfg = guild_configs.get(str(guild_id), {
-        'channel_voice': bot_config.get('channel_voice', ''),
-        'channel_content': bot_config.get('channel_content', ''),
-        'channel_stats': bot_config.get('channel_stats', ''),
-    })
-    return jsonify(cfg)
+    # Return effective config: per-guild overrides merged on top of global defaults
+    effective = {key: get_gc(guild_id, key) for key in GUILD_ADMIN_KEYS}
+    # Also include raw per-guild overrides so frontend can show what's customised
+    effective['_overrides'] = guild_configs.get(str(guild_id), {})
+    return jsonify(effective)
 
 @flask_app.route('/api/guild-config', methods=['POST'])
 @require_auth
 def api_guild_config_post():
     data = request.json or {}
-    guild_id = str(data.get('guild_id', ''))
+    guild_id = str(data.get('guild_id', '')).strip()
     if not guild_id:
         return jsonify({'ok': False, 'error': 'guild_id required'}), 400
     if not require_guild_access(guild_id):
         return jsonify({'error': 'Forbidden'}), 403
     if guild_id not in guild_configs:
         guild_configs[guild_id] = {}
-    for ch_type in ('channel_voice', 'channel_content', 'channel_stats'):
-        if ch_type in data:
-            val = data[ch_type]
-            if val:
-                try:
-                    guild_configs[guild_id][ch_type] = int(val)
-                except (ValueError, TypeError):
-                    pass
-            else:
-                guild_configs[guild_id].pop(ch_type, None)
+    channel_keys = {'channel_voice', 'channel_content', 'channel_stats'}
+    bool_keys    = {k for k in GUILD_ADMIN_KEYS if k.startswith('announce_') or k.startswith('send_')}
+    int_keys     = GUILD_ADMIN_KEYS - channel_keys - bool_keys
+    for key in GUILD_ADMIN_KEYS:
+        if key not in data:
+            continue
+        val = data[key]
+        if val is None or val == '':
+            # Empty → remove override (revert to global default)
+            guild_configs[guild_id].pop(key, None)
+        elif key in channel_keys:
+            try:
+                guild_configs[guild_id][key] = int(val)
+            except (ValueError, TypeError):
+                pass
+        elif key in bool_keys:
+            guild_configs[guild_id][key] = bool(val)
+        elif key in int_keys:
+            try:
+                guild_configs[guild_id][key] = int(val)
+            except (ValueError, TypeError):
+                pass
     save_guild_configs()
     return jsonify({'ok': True})
 
 @flask_app.route('/api/heatmap')
 @require_auth
 def api_heatmap():
-    guild_id = request.args.get('guild_id')
-    if guild_id:
-        return jsonify({guild_id: hourly_activity.get(guild_id, {str(h): 0 for h in range(24)})})
-    return jsonify(hourly_activity)
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    return jsonify({guild_id: hourly_activity.get(guild_id, {str(h): 0 for h in range(24)})})
 
 @flask_app.route('/api/history')
 @require_auth
 def api_history():
-    guild_id = request.args.get('guild_id')
-    if guild_id:
-        filtered = [s for s in session_history if s.get('guild_id') == guild_id]
-        return jsonify(filtered[-50:])
-    return jsonify(session_history[-50:])
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    filtered = [s for s in session_history if s.get('guild_id') == guild_id]
+    return jsonify(filtered[-50:])
 
 @flask_app.route('/api/profile/<uid>')
 @require_auth
 def api_profile(uid):
-    # Search across all guilds
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    # Scope to the requested guild only
     seconds = 0
     name = 'Unknown'
-    for gid, gdata in weekly_stats.items():
-        if uid in gdata:
-            seconds += gdata[uid].get('seconds', 0)
-            name = gdata[uid].get('name', name)
-    # Add live time if present
+    gdata = weekly_stats.get(str(guild_id), {})
+    if uid in gdata:
+        seconds += gdata[uid].get('seconds', 0)
+        name = gdata[uid].get('name', name)
+    # Add live time if member is currently in voice in this guild
     for (gid, mid), (n, jt, _) in voice_join_times.items():
-        if str(mid) == uid:
+        if str(mid) == uid and str(gid) == guild_id:
             seconds += int((datetime.now(THAI_TZ) - jt).total_seconds())
             name = n
-    sessions    = [s for s in session_history if s.get('uid') == uid or s.get('name') == name]
+    sessions = [s for s in session_history
+                if s.get('guild_id') == guild_id and (s.get('uid') == uid or s.get('name') == name)]
     hour_counts = {}
     for s in sessions:
         try:
@@ -1440,7 +1610,10 @@ def api_profile(uid):
 @flask_app.route('/api/votes')
 @require_auth
 def api_votes():
-    threshold = bot_config.get('joke_downvote_threshold', 3)
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    threshold = get_gc(guild_id, 'joke_downvote_threshold', 3)
     result = []
     for joke, v in joke_votes.items():
         result.append({'joke': joke[:80]+('…' if len(joke)>80 else ''),
@@ -1460,18 +1633,26 @@ def api_votes_reset():
 @flask_app.route('/api/trivia-scores')
 @require_auth
 def api_trivia_scores():
-    return jsonify(trivia_scores)
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    return jsonify(trivia_scores.get(str(guild_id), {}))
 
 @flask_app.route('/api/daily-heatmap')
 @require_auth
 def api_daily_heatmap():
-    guild_id = request.args.get('guild_id')
-    days = int(request.args.get('days', 365))
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    try:
+        days = max(1, min(int(request.args.get('days', 365)), 3650))
+    except ValueError:
+        return jsonify({'error': 'invalid days'}), 400
     now = datetime.now(THAI_TZ)
     cutoff = now - timedelta(days=days)
     result = {}
     for s in session_history:
-        if guild_id and s.get('guild_id') != guild_id:
+        if s.get('guild_id') != guild_id:
             continue
         try:
             join_date = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
@@ -1481,13 +1662,7 @@ def api_daily_heatmap():
             result[d] = result.get(d, 0) + 1
         except Exception:
             pass
-    if guild_id:
-        gdata = daily_activity.get(str(guild_id), {})
-    else:
-        gdata = {}
-        for gd in daily_activity.values():
-            for d, c in gd.items():
-                gdata[d] = gdata.get(d, 0) + c
+    gdata = daily_activity.get(str(guild_id), {})
     for d, c in gdata.items():
         try:
             dt = datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=THAI_TZ)
@@ -1500,13 +1675,18 @@ def api_daily_heatmap():
 @flask_app.route('/api/user-daily')
 @require_auth
 def api_user_daily():
-    guild_id = request.args.get('guild_id')
-    days = int(request.args.get('days', 365))
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    try:
+        days = max(1, min(int(request.args.get('days', 365)), 3650))
+    except ValueError:
+        return jsonify({'error': 'invalid days'}), 400
     now = datetime.now(THAI_TZ)
     cutoff = now - timedelta(days=days)
     result = {}
     for s in session_history:
-        if guild_id and s.get('guild_id') != guild_id:
+        if s.get('guild_id') != guild_id:
             continue
         try:
             join_date = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
@@ -1521,18 +1701,7 @@ def api_user_daily():
             result[uid]['name'] = name
         except Exception:
             pass
-    if guild_id:
-        gdata = user_daily.get(str(guild_id), {})
-    else:
-        gdata = {}
-        for gd in user_daily.values():
-            for uid, udata in gd.items():
-                if uid not in gdata:
-                    gdata[uid] = {'name': udata['name'], 'dates': dict(udata.get('dates', {}))}
-                else:
-                    for d2, c2 in udata.get('dates', {}).items():
-                        gdata[uid]['dates'][d2] = gdata[uid]['dates'].get(d2, 0) + c2
-                    gdata[uid]['name'] = udata['name']
+    gdata = user_daily.get(str(guild_id), {})
     for uid, udata in gdata.items():
         if uid not in result:
             result[uid] = {'name': udata['name'], 'dates': {}}

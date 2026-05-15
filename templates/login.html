@@ -5,36 +5,60 @@
 <title>Login — AjarnBot Dashboard</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:#1e1f22;color:#dbdee1;font-family:'Segoe UI',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;}
-  .card{background:#2b2d31;border:1px solid #3f4147;border-radius:12px;padding:40px 36px;width:100%;max-width:380px;}
+  body{background:#1e1f22;color:#dbdee1;font-family:'Segoe UI',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;}
+  .card{background:#2b2d31;border:1px solid #3f4147;border-radius:12px;padding:40px 36px;width:100%;max-width:400px;}
   .logo{width:56px;height:56px;border-radius:50%;background:#5865f2;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 20px;}
   h1{text-align:center;font-size:20px;margin-bottom:6px;}
   .sub{text-align:center;color:#949ba4;font-size:13px;margin-bottom:28px;}
-  .btn-discord{display:flex;align-items:center;justify-content:center;gap:10px;background:#5865f2;color:white;border:none;border-radius:8px;padding:12px;width:100%;font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;margin-bottom:16px;transition:filter .15s;}
+  .btn-discord{display:flex;align-items:center;justify-content:center;gap:10px;background:#5865f2;color:white;border:none;border-radius:8px;padding:13px;width:100%;font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;margin-bottom:12px;transition:filter .15s;}
   .btn-discord:hover{filter:brightness(1.15);}
+  .btn-invite{display:flex;align-items:center;justify-content:center;gap:8px;background:#23a559;color:white;border:none;border-radius:8px;padding:11px;width:100%;font-size:14px;font-weight:600;cursor:pointer;text-decoration:none;margin-bottom:16px;transition:filter .15s;}
+  .btn-invite:hover{filter:brightness(1.15);}
   .divider{display:flex;align-items:center;gap:10px;color:#4e5058;font-size:12px;margin-bottom:16px;}
   .divider::before,.divider::after{content:'';flex:1;height:1px;background:#3f4147;}
+  .steps-box{background:#1e1f22;border-radius:8px;padding:12px 14px;margin-bottom:16px;}
+  .steps-box p{font-size:11px;color:#949ba4;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;font-weight:600;}
+  .step{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;font-size:12px;color:#dbdee1;}
+  .step:last-child{margin-bottom:0;}
+  .step-num{background:#5865f2;color:white;border-radius:50%;width:18px;height:18px;min-width:18px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;margin-top:1px;}
   input{background:#1e1f22;border:1px solid #3f4147;color:#dbdee1;border-radius:6px;padding:10px 12px;width:100%;font-size:14px;margin-bottom:10px;}
   input:focus{outline:none;border-color:#5865f2;}
   .btn-pw{background:#4e5058;color:white;border:none;border-radius:6px;padding:10px;width:100%;font-size:14px;cursor:pointer;}
   .btn-pw:hover{background:#6d6f78;}
   .err{color:#da373c;font-size:13px;margin-top:10px;text-align:center;}
-  .note{color:#949ba4;font-size:11px;text-align:center;margin-top:16px;}
+  .note{color:#4e5058;font-size:11px;text-align:center;margin-top:16px;}
 </style>
 </head>
 <body>
 <div class="card">
   <div class="logo">&#127908;</div>
   <h1>AjarnBot Dashboard</h1>
-  <p class="sub">เข้าสู่ระบบเพื่อจัดการบอท</p>
+  <p class="sub">จัดการบอทใน Discord Server ของคุณ</p>
+
+  {% if has_invite %}
+  <div class="steps-box">
+    <p>ใช้งานครั้งแรก</p>
+    <div class="step"><span class="step-num">1</span><span>กด Invite เพื่อเพิ่มบอทเข้า Server ของคุณ</span></div>
+    <div class="step"><span class="step-num">2</span><span>กลับมากด Login with Discord</span></div>
+    <div class="step"><span class="step-num">3</span><span>เลือก Server แล้วจัดการได้เลย</span></div>
+  </div>
+  <a href="/invite" target="_blank" class="btn-invite">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Invite Bot เข้า Server ของคุณ
+  </a>
+  {% endif %}
+
   {{ discord_btn | safe }}
+
   {% if show_pw %}
+  {% if has_invite %}<div class="divider">Owner</div>{% endif %}
   <form method="POST" action="/login">
-    <input type="password" name="password" placeholder="รหัสผ่าน (Owner เท่านั้น)" autofocus>
+    <input type="password" name="password" placeholder="รหัสผ่าน (Owner เท่านั้น)">
     <button type="submit" class="btn-pw">เข้าสู่ระบบด้วยรหัสผ่าน</button>
     {{ error_msg | safe }}
   </form>
   {% endif %}
-  <p class="note">เข้าสู่ระบบด้วย Discord เพื่อจัดการ Server ของคุณ</p>
+
+  <p class="note">ต้องเป็นแอดมินของ Server จึงจะจัดการได้</p>
 </div>
 </body></html>
