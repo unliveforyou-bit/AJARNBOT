@@ -26,6 +26,7 @@
       <li><a href="#ct-status-section"><i class="ph-bold ph-chart-bar" aria-hidden="true"></i> สถานะ Bot</a></li>
       <li><a href="#ct-heatmap-section"><i class="ph-bold ph-fire" aria-hidden="true"></i> Heatmap</a></li>
       <li><a href="#ct-contrib-section"><i class="ph-bold ph-calendar-dots" aria-hidden="true"></i> Contribution</a></li>
+      <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
       <li><a href="#ct-voice-section"><i class="ph-bold ph-microphone-stage" aria-hidden="true"></i> Voice Live</a></li>
     </ul>
   </div>
@@ -44,6 +45,8 @@
     <span class="sidebar-section-label">ข้อมูล</span>
     <ul class="sidebar-nav">
       <li><a href="#ct-stats-section"><i class="ph-bold ph-trophy" aria-hidden="true"></i> สถิติ</a></li>
+      <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
+      <li><a href="#ct-inactive-section"><i class="ph-bold ph-user-minus" aria-hidden="true"></i> Inactive Users</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
       <li><a href="#ct-channel-section"><i class="ph-bold ph-speaker-high" aria-hidden="true"></i> Channel Activity</a></li>
       <li><a href="#ct-history-section"><i class="ph-bold ph-clipboard-text" aria-hidden="true"></i> Session History</a></li>
@@ -115,28 +118,36 @@
           <div class="stat-label" id="lbl-uptime">Uptime</div>
         </div>
         <div class="stat-cell">
-          <div class="stat-value" id="evJoin" aria-labelledby="lbl-join">0</div>
+          <div class="stat-value" id="evJoin" aria-labelledby="lbl-join">—</div>
           <div class="stat-label" id="lbl-join">เข้าห้อง</div>
         </div>
         <div class="stat-cell">
-          <div class="stat-value" id="evLeave" aria-labelledby="lbl-leave">0</div>
+          <div class="stat-value" id="evLeave" aria-labelledby="lbl-leave">—</div>
           <div class="stat-label" id="lbl-leave">ออกห้อง</div>
         </div>
         <div class="stat-cell">
-          <div class="stat-value" id="evMute" aria-labelledby="lbl-mute">0</div>
+          <div class="stat-value" id="evMute" aria-labelledby="lbl-mute">—</div>
           <div class="stat-label" id="lbl-mute">Mute</div>
         </div>
         <div class="stat-cell">
-          <div class="stat-value" id="evDeaf" aria-labelledby="lbl-deaf">0</div>
+          <div class="stat-value" id="evDeaf" aria-labelledby="lbl-deaf">—</div>
           <div class="stat-label" id="lbl-deaf">Deaf</div>
         </div>
         <div class="stat-cell">
-          <div class="stat-value" id="evStream" aria-labelledby="lbl-stream">0</div>
+          <div class="stat-value" id="evStream" aria-labelledby="lbl-stream">—</div>
           <div class="stat-label" id="lbl-stream">Stream</div>
         </div>
         <div class="stat-cell">
-          <div class="stat-value" id="evVideo" aria-labelledby="lbl-video">0</div>
+          <div class="stat-value" id="evVideo" aria-labelledby="lbl-video">—</div>
           <div class="stat-label" id="lbl-video">กล้อง</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="avgSess" aria-labelledby="lbl-avg">—</div>
+          <div class="stat-label" id="lbl-avg">เฉลี่ย/session</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value" id="totalSess" aria-labelledby="lbl-total">—</div>
+          <div class="stat-label" id="lbl-total">Sessions ทั้งหมด</div>
         </div>
       </div>
     </section>
@@ -260,7 +271,30 @@
       </div>
     </section>
 
-    <!-- 7+8. Voice Live + Stats (two col) -->
+    <!-- 6c. DAU Trend + Retention -->
+    <section class="card" id="ct-dau-section" aria-labelledby="ct-dau">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-trend-up"></i></div>
+        <h2 class="card-title" id="ct-dau">DAU Trend — 30 วัน</h2>
+      </div>
+      <div class="card-body">
+        <div id="dauSummary" class="dau-summary"></div>
+        <div class="dau-chart-wrap" id="dauChartWrap">
+          <svg class="dau-svg" id="dauSvg" role="img" aria-label="DAU line chart"></svg>
+          <div class="dau-tooltip" id="dauTooltip"></div>
+        </div>
+        <div class="dau-legend">
+          <span class="dau-legend-dot dau" style="height:2px;width:16px"></span> DAU (unique users)
+          <span class="dau-legend-dot joins" style="height:1.5px;width:16px;border-top:1.5px dashed var(--muted)"></span> Joins
+        </div>
+        <div style="margin-top:16px">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600">Retention week-over-week</div>
+          <div class="retention-wrap" id="retentionWrap"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 7+8. Voice Live + Leaderboard (two col) -->
     <div class="two-col">
       <section class="card" id="ct-voice-section" aria-labelledby="ct-voice" style="margin-bottom:0">
         <div class="card-header">
@@ -274,13 +308,30 @@
       <section class="card" id="ct-stats-section" aria-labelledby="ct-stats" style="margin-bottom:0">
         <div class="card-header">
           <div class="card-icon yellow" aria-hidden="true"><i class="ph-bold ph-trophy"></i></div>
-          <h2 class="card-title" id="ct-stats">สถิติสัปดาห์นี้</h2>
+          <h2 class="card-title" id="ct-stats">Leaderboard</h2>
+          <div class="period-btns" role="group" aria-label="เลือกช่วงเวลา">
+            <button class="period-btn active" onclick="loadLeaderboard('7d',this)" aria-pressed="true">7d</button>
+            <button class="period-btn" onclick="loadLeaderboard('30d',this)" aria-pressed="false">30d</button>
+            <button class="period-btn" onclick="loadLeaderboard('90d',this)" aria-pressed="false">90d</button>
+            <button class="period-btn" onclick="loadLeaderboard('alltime',this)" aria-pressed="false">All</button>
+          </div>
         </div>
         <div class="card-body">
           <div class="stat-list" id="statsList"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
         </div>
       </section>
     </div>
+
+    <!-- Inactive users -->
+    <section class="card" id="ct-inactive-section" aria-labelledby="ct-inactive">
+      <div class="card-header">
+        <div class="card-icon" style="background:rgba(248,81,73,0.12)" aria-hidden="true"><i class="ph-bold ph-user-minus" style="color:var(--red)"></i></div>
+        <h2 class="card-title" id="ct-inactive">สมาชิกที่ไม่ active (14+ วัน)</h2>
+      </div>
+      <div class="card-body">
+        <div id="inactiveList"><span class="empty-msg">กำลังโหลด...</span></div>
+      </div>
+    </section>
 
     <!-- 9. Votes -->
     <section class="card" id="ct-votes-section" aria-labelledby="ct-votes">

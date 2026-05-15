@@ -159,7 +159,8 @@ async function switchGuild(guildId){
     const sel=document.getElementById('guildSelect');
     if(sel){sel.value=guildId;await onGuildChange();}
     // reload all data panels
-    refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();loadChannelActivity();
+    refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
+    loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -288,15 +289,9 @@ async function refreshStatus(){
         +'<div class="ch-rank-divider">ลำดับห้องเสียงยอดนิยม</div>'
         +chRows;
     }
-    const medals=['🥇','🥈','🥉'];
-    const rankLabel=i=>medals[i]
-      ?'<span aria-hidden="true">'+medals[i]+'</span><span class="sr-only">'+(i+1)+'.</span>'
-      :(i+1)+'.';
-    const sl=document.getElementById('statsList');
-    sl.innerHTML=d.weekly_stats.length===0?'<span class="empty-msg">ยังไม่มีข้อมูล</span>'
-      :d.weekly_stats.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+rankLabel(i)+'</span>'
-        +'<span class="stat-name"><a href="/profile/'+escHTML(s.uid)+'" target="_blank">'+escHTML(s.name)+'</a></span>'
-        +'<span class="stat-time">'+escHTML(s.time)+'</span></div>').join('');
+    // avg session + total sessions
+    const avgEl=document.getElementById('avgSess');if(avgEl)avgEl.textContent=d.avg_session_fmt||'—';
+    const totEl=document.getElementById('totalSess');if(totEl)totEl.textContent=d.total_sessions!=null?d.total_sessions.toLocaleString():'—';
   }catch(e){document.getElementById('statusLabel').textContent='กำลังเชื่อมต่อ...';}
 }
 async function loadHeatmap(){
@@ -423,6 +418,10 @@ async function loadContribGraph(){
         return`<div class="contrib-cell ${isFuture?'lx':level(count)}" title="${tip}"></div>`;
       }).join('');
 
+      const alltimeSec=udata.alltime_seconds||0;
+      const streakMax=udata.streak_max||0;
+      const sessCount=udata.session_count||0;
+      function fmtSec(s){if(!s)return'-';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h?h+'h '+m+'m':m+'m';}
       return`<div class="contrib-user-block">
         <div class="contrib-user-header">
           <div class="contrib-avatar">${escHTML(initial)}</div>
@@ -431,6 +430,9 @@ async function loadContribGraph(){
             <div class="contrib-user-badges">
               <span class="contrib-badge accent">${totalJoins.toLocaleString()} joins</span>
               <span class="contrib-badge">${activeDays} วันที่ active</span>
+              ${alltimeSec?'<span class="contrib-badge">⏱ '+fmtSec(alltimeSec)+'</span>':''}
+              ${streakMax?'<span class="contrib-badge">🔥 streak max '+streakMax+' วัน</span>':''}
+              ${sessCount?'<span class="contrib-badge">'+sessCount+' sessions</span>':''}
             </div>
           </div>
         </div>
@@ -512,6 +514,109 @@ function exportCSV(){
   const url='/api/export/csv'+(currentGuildId?'?guild_id='+currentGuildId:'');
   const a=document.createElement('a');a.href=url;a.download='sessions.csv';document.body.appendChild(a);a.click();a.remove();
 }
+// ── DAU Line Chart ────────────────────────────────────────────────────────────
+async function loadDAU(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('dauChartWrap');const svgEl=document.getElementById('dauSvg');
+  const summary=document.getElementById('dauSummary');if(!svgEl||!wrap)return;
+  let data;try{const r=await fetch('/api/dau?guild_id='+currentGuildId+'&days=30');if(!r.ok)throw new Error(r.status);data=await r.json();}catch(e){return;}
+  if(!data||!data.length){if(summary)summary.textContent='ยังไม่มีข้อมูล';return;}
+  const dauVals=data.map(d=>d.dau);const joinVals=data.map(d=>d.joins);
+  const maxVal=Math.max(...dauVals,...joinVals,1);
+  const avgDAU=Math.round(dauVals.reduce((a,b)=>a+b,0)/dauVals.length);
+  const peakDAU=Math.max(...dauVals);
+  if(summary)summary.innerHTML='<span>Peak DAU: <strong>'+peakDAU+'</strong></span><span>Avg DAU: <strong>'+avgDAU+'</strong></span><span>ช่วง 30 วัน</span>';
+  const W=wrap.clientWidth||300;const H=150;const PAD={t:10,r:10,b:18,l:28};
+  const cW=W-PAD.l-PAD.r;const cH=H-PAD.t-PAD.b;
+  function xPos(i){return PAD.l+i/(data.length-1||1)*cW;}
+  function yPos(v){return PAD.t+cH-(v/maxVal*cH);}
+  // area gradient + polylines
+  const dauPts=data.map((d,i)=>xPos(i)+','+yPos(d.dau)).join(' ');
+  const joinPts=data.map((d,i)=>xPos(i)+','+yPos(d.joins)).join(' ');
+  const areaPath=data.map((d,i)=>(i===0?'M':'L')+xPos(i)+' '+yPos(d.dau)).join(' ')
+    +' L'+xPos(data.length-1)+' '+(PAD.t+cH)+' L'+PAD.l+' '+(PAD.t+cH)+' Z';
+  // Y-axis labels
+  const yLabels=[0,Math.round(maxVal/2),maxVal].map(v=>{
+    const y=yPos(v);return`<text x="${PAD.l-4}" y="${y+4}" text-anchor="end" font-size="9" fill="var(--muted)">${v}</text>`;
+  }).join('');
+  // X-axis labels (show 5 evenly spaced)
+  const xIdxs=[0,7,14,21,29].filter(i=>i<data.length);
+  const xLabels=xIdxs.map(i=>{
+    const d=data[i];const lbl=d.date.slice(5);// MM-DD
+    return`<text x="${xPos(i)}" y="${PAD.t+cH+14}" text-anchor="middle" font-size="9" fill="var(--muted)">${lbl}</text>`;
+  }).join('');
+  svgEl.setAttribute('viewBox',`0 0 ${W} ${H}`);
+  svgEl.innerHTML=`<defs>
+    <linearGradient id="dauGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="var(--accent)" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${areaPath}" fill="url(#dauGrad)" class="dau-area"/>
+    <polyline points="${joinPts}" class="dau-line-joins" vector-effect="non-scaling-stroke"/>
+    <polyline points="${dauPts}" class="dau-line" vector-effect="non-scaling-stroke"/>
+    ${yLabels}${xLabels}
+    ${data.map((d,i)=>`<circle class="dau-dot" cx="${xPos(i)}" cy="${yPos(d.dau)}" r="3" tabindex="0"
+      aria-label="${d.date}: DAU ${d.dau}, joins ${d.joins}" role="img">
+      <title>${d.date}\nDAU: ${d.dau}\nJoins: ${d.joins}</title></circle>`).join('')}`;
+}
+
+// ── Leaderboard with period selector ─────────────────────────────────────────
+let _lbPeriod='7d';
+async function loadLeaderboard(period,btn){
+  if(!currentGuildId)return;
+  if(period)_lbPeriod=period;
+  if(btn){
+    document.querySelectorAll('.period-btn').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});
+    btn.classList.add('active');btn.setAttribute('aria-pressed','true');
+  }
+  const el=document.getElementById('statsList');if(!el)return;
+  let d;try{const r=await fetch('/api/leaderboard?guild_id='+currentGuildId+'&period='+_lbPeriod);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  const medals=['🥇','🥈','🥉'];
+  const rankLabel=i=>medals[i]
+    ?'<span aria-hidden="true">'+medals[i]+'</span><span class="sr-only">'+(i+1)+'.</span>'
+    :(i+1)+'.';
+  el.innerHTML=!d||!d.length?'<span class="empty-msg">ยังไม่มีข้อมูล</span>'
+    :d.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+rankLabel(i)+'</span>'
+      +'<span class="stat-name"><a href="/profile/'+escHTML(s.uid)+'" target="_blank">'+escHTML(s.name)+'</a></span>'
+      +'<span class="stat-time">'+escHTML(s.duration)+'</span></div>').join('');
+}
+
+// ── Inactive users ────────────────────────────────────────────────────────────
+async function loadInactive(){
+  if(!currentGuildId)return;
+  const el=document.getElementById('inactiveList');if(!el)return;
+  let d;try{const r=await fetch('/api/inactive?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length){el.innerHTML='<span class="empty-msg">ไม่มีสมาชิกที่ inactive เกิน 14 วัน</span>';return;}
+  el.innerHTML=d.map(u=>{
+    const days=u.days_inactive;
+    const cls=days>=60?'gone':days>=30?'danger':'warn';
+    return'<div class="inactive-row">'
+      +'<span class="inactive-name">'+escHTML(u.name)+'</span>'
+      +'<span class="inactive-date">'+escHTML(u.last_seen)+'</span>'
+      +'<span class="inactive-badge '+cls+'">'+days+' วัน</span>'
+      +'</div>';
+  }).join('');
+}
+
+// ── Retention chart ───────────────────────────────────────────────────────────
+async function loadRetention(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('retentionWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/retention?guild_id='+currentGuildId+'&weeks=8');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length||d.every(w=>w.active_count===0)){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  wrap.innerHTML=d.map((w,i)=>{
+    const pct=w.retention_pct!==null?w.retention_pct:null;
+    const h=pct!==null?Math.max(Math.round(pct/100*46),2):4;
+    const lbl=w.week_start.slice(5);// MM-DD
+    const title=lbl+'\nActive: '+w.active_count+(pct!==null?'\nRetention: '+pct+'%':'');
+    return'<div class="retention-col" title="'+escHTML(title)+'">'
+      +(i>0?'<div class="retention-pct">'+(pct!==null?pct+'%':'—')+'</div>':'<div class="retention-pct">—</div>')
+      +'<div class="retention-bar-bg"><div class="retention-bar-fill" style="height:'+(i>0&&pct!==null?h:4)+'px"></div></div>'
+      +'<div class="retention-week">'+escHTML(lbl)+'</div>'
+      +'</div>';
+  }).join('');
+}
+
 async function loadLogs(){
   try{
     const r=await fetch('/api/logs');const d=await r.json();
@@ -553,12 +658,19 @@ window.addEventListener('scroll',updateSidebarActive,{passive:true});
 // Close sidebar on ESC
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
 
-buildUI();loadConfig();refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();loadChannelActivity();loadLogs();
+buildUI();loadConfig();
+refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
+loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();loadLogs();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
 // Pause polling when tab is hidden to save resources
 function _poll(fn,ms){setInterval(()=>{if(!document.hidden)fn();},ms);}
 _poll(loadLogs,30000);
-_poll(refreshStatus,8000);_poll(loadHeatmap,30000);_poll(loadHistory,15000);_poll(loadVotes,20000);_poll(loadContribGraph,120000);_poll(loadChannelActivity,60000);
+_poll(refreshStatus,8000);_poll(loadHeatmap,30000);_poll(loadHistory,15000);
+_poll(loadVotes,20000);_poll(loadContribGraph,120000);_poll(loadChannelActivity,60000);
+_poll(loadDAU,120000);_poll(()=>loadLeaderboard(_lbPeriod),30000);
+_poll(loadInactive,300000);_poll(loadRetention,300000);
 // Resume immediately when tab becomes visible again
-document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();}});
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();loadDAU();}
+});

@@ -744,3 +744,67 @@ body.light .contrib-cell.l4 { background:#0969da; }
     animation-iteration-count: 1 !important;
   }
 }
+
+/* ── DAU SVG Line Chart ── */
+.dau-chart-wrap { position:relative; height:150px; width:100%; }
+.dau-svg { width:100%; height:100%; overflow:visible; display:block; }
+.dau-area { opacity:0.12; }
+.dau-line { fill:none; stroke:var(--accent); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+.dau-line-joins { fill:none; stroke:var(--muted); stroke-width:1.5; stroke-dasharray:5 3; stroke-linejoin:round; }
+.dau-dot { fill:var(--accent); cursor:pointer; transition:r 0.1s; }
+.dau-dot:hover,.dau-dot:focus { r:5; outline:none; }
+.dau-tooltip {
+  position:absolute; background:var(--card-bg); border:1px solid var(--border-strong);
+  border-radius:var(--radius); padding:6px 10px; font-size:11px; color:var(--text);
+  pointer-events:none; white-space:nowrap; box-shadow:0 4px 12px rgba(0,0,0,0.3);
+  display:none; z-index:10;
+}
+.dau-legend { display:flex; gap:14px; font-size:11px; color:var(--muted); margin-top:8px; align-items:center; }
+.dau-legend-dot { display:inline-block; width:10px; height:2px; vertical-align:middle; border-radius:1px; }
+.dau-legend-dot.dau { background:var(--accent); }
+.dau-legend-dot.joins { background:var(--muted); }
+.dau-summary { display:flex; gap:16px; font-size:12px; color:var(--muted); margin-bottom:10px; flex-wrap:wrap; }
+.dau-summary strong { color:var(--text); }
+
+/* ── Retention mini bars ── */
+.retention-wrap { display:flex; gap:6px; align-items:flex-end; height:60px; margin-top:12px; padding-top:4px; }
+.retention-col { display:flex; flex-direction:column; align-items:center; gap:3px; flex:1; }
+.retention-bar-bg { width:100%; background:var(--border); border-radius:2px; height:50px; position:relative; overflow:hidden; }
+.retention-bar-fill { position:absolute; bottom:0; width:100%; background:var(--accent); border-radius:2px; transition:height 0.4s cubic-bezier(0.22,1,0.36,1); }
+.retention-pct { font-size:9px; color:var(--muted); white-space:nowrap; }
+.retention-week { font-size:9px; color:var(--muted); transform:rotate(-30deg); transform-origin:top left; white-space:nowrap; margin-top:4px; }
+
+/* ── Period selector buttons ── */
+.period-btns { display:flex; gap:3px; margin-left:auto; flex-shrink:0; }
+.period-btn {
+  background:transparent; border:1px solid var(--border); color:var(--muted);
+  border-radius:var(--radius-sm); padding:3px 8px; font-size:11px; cursor:pointer;
+  transition:background 0.15s, color 0.15s, border-color 0.15s;
+}
+.period-btn:hover { border-color:var(--accent); color:var(--accent); }
+.period-btn.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+body.light .period-btn { border-color:var(--border); color:var(--muted); }
+body.light .period-btn.active { color:#fff; }
+
+/* ── Inactive users widget ── */
+.inactive-row {
+  display:flex; align-items:center; gap:8px; padding:8px 0;
+  border-bottom:1px solid var(--border); font-size:13px;
+}
+.inactive-row:last-child { border-bottom:none; }
+.inactive-name { flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.inactive-date { font-size:11px; color:var(--muted); flex-shrink:0; }
+.inactive-badge {
+  font-size:10px; font-weight:700; padding:2px 7px; border-radius:20px; flex-shrink:0;
+}
+.inactive-badge.warn { background:rgba(210,153,34,0.15); color:var(--yellow); border:1px solid rgba(210,153,34,0.3); }
+.inactive-badge.danger { background:rgba(248,81,73,0.12); color:var(--red); border:1px solid rgba(248,81,73,0.25); }
+.inactive-badge.gone { background:rgba(139,148,158,0.12); color:var(--muted); border:1px solid var(--border); }
+
+/* ── Profile channel breakdown ── */
+.profile-ch-bar-wrap { display:flex; flex-direction:column; gap:6px; }
+.profile-ch-row { display:flex; align-items:center; gap:8px; font-size:12px; }
+.profile-ch-name { width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); flex-shrink:0; }
+.profile-ch-track { flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
+.profile-ch-fill { height:100%; background:var(--accent); border-radius:3px; }
+.profile-ch-time { font-size:11px; color:var(--muted); min-width:50px; text-align:right; flex-shrink:0; }

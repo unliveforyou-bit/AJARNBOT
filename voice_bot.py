@@ -378,6 +378,14 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
         uentry['first_seen'] = now_iso
     uentry['last_seen'] = now_iso
     save_user_daily()
+    # DAU: track unique users per day
+    if gid not in daily_unique:
+        daily_unique[gid] = {}
+    if date_str not in daily_unique[gid]:
+        daily_unique[gid][date_str] = []
+    if uid_str not in daily_unique[gid][date_str]:
+        daily_unique[gid][date_str].append(uid_str)
+        save_daily_unique()
     save_active_sessions()   # ← persist immediately so restart restores correctly
 
 def record_leave(guild_id, member_id) -> list:
@@ -603,6 +611,25 @@ def save_user_daily():
     with _lock_user_daily:
         with open(USER_DAILY_FILE, 'w', encoding='utf-8') as f:
             json.dump(user_daily, f, ensure_ascii=False)
+
+# ===== Daily Unique Users (DAU) =====
+daily_unique = {}   # {guild_id: {date_str: [uid, ...]}}
+DAILY_UNIQUE_FILE  = os.path.join(DATA_DIR, 'daily_unique.json')
+_lock_daily_unique = threading.Lock()
+
+def load_daily_unique():
+    global daily_unique
+    if os.path.exists(DAILY_UNIQUE_FILE):
+        try:
+            with open(DAILY_UNIQUE_FILE, encoding='utf-8') as f:
+                daily_unique = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_daily_unique failed: {e}')
+
+def save_daily_unique():
+    with _lock_daily_unique:
+        with open(DAILY_UNIQUE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(daily_unique, f, ensure_ascii=False)
 
 # ===== Milestones (Feature 5) =====
 # milestones_awarded[guild_id][uid] = [hours_int, ...]  — milestones already announced
@@ -1023,6 +1050,7 @@ async def on_ready():
     load_trivia_scores()
     load_daily()
     load_user_daily()
+    load_daily_unique()
     load_milestones()
     load_channel_activity()
     load_event_counts()   # ← restore persisted event counters
@@ -1777,9 +1805,27 @@ def api_status():
     combined = get_stats_for_period('week', guild_id=guild_id)
     stats_sorted   = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
     weekly_display = [{'uid': k, 'name': v['name'], 'time': format_duration(v['seconds'])} for k, v in stats_sorted[:10]]
+    # Avg / median session duration (all-time for this guild)
+    guild_secs = [s['seconds'] for s in session_history if s.get('guild_id') == guild_id and s.get('seconds', 0) > 0]
+    total_sessions = len(guild_secs)
+    if guild_secs:
+        avg_secs    = int(sum(guild_secs) / total_sessions)
+        sorted_secs = sorted(guild_secs)
+        mid = total_sessions // 2
+        median_secs = sorted_secs[mid] if total_sessions % 2 else (sorted_secs[mid - 1] + sorted_secs[mid]) // 2
+    else:
+        avg_secs = median_secs = 0
     # event_counts is global — expose only guild-relevant subset
-    return jsonify({'online': online, 'uptime': format_duration(uptime_sec),
-                    'voice_users': voice_users, 'weekly_stats': weekly_display})
+    ec = event_counts
+    return jsonify({
+        'online': online, 'uptime': format_duration(uptime_sec),
+        'voice_users': voice_users, 'weekly_stats': weekly_display,
+        'total_sessions': total_sessions,
+        'avg_session_min': round(avg_secs / 60, 1),
+        'median_session_min': round(median_secs / 60, 1),
+        'avg_session_fmt': format_duration(avg_secs),
+        'event_counts': ec,
+    })
 
 @flask_app.route('/api/my-guilds')
 @require_auth
@@ -2008,12 +2054,20 @@ def api_profile(uid):
             log(f'profile hour_counts: bad join format: {e}')
     peak_hour = max(hour_counts, key=hour_counts.get) if hour_counts else None
     avg_sec   = (sum(s['seconds'] for s in sessions) // len(sessions)) if sessions else 0
+    # Enrich from user_daily if available
+    ud = user_daily.get(str(guild_id), {}).get(uid, {})
     return jsonify({'uid': uid, 'name': name, 'total_seconds': seconds,
                     'total_duration': format_duration(seconds), 'session_count': len(sessions),
                     'avg_duration': format_duration(avg_sec) if avg_sec else '-',
                     'peak_hour': peak_hour,
                     'hour_counts': {str(h): hour_counts.get(str(h), 0) for h in range(24)},
-                    'sessions': list(reversed(sessions[-20:]))})
+                    'sessions': list(reversed(sessions[-20:])),
+                    'alltime_seconds':  ud.get('alltime_seconds', seconds),
+                    'streak_max':       ud.get('streak_max', 0),
+                    'channel_seconds':  ud.get('channel_seconds', {}),
+                    'first_seen':       ud.get('first_seen'),
+                    'last_seen':        ud.get('last_seen'),
+                    })
 
 @flask_app.route('/api/votes')
 @require_auth
@@ -2121,6 +2175,155 @@ def api_channel_stats():
         {'channel': ch, 'seconds': sec, 'duration': format_duration(sec)}
         for ch, sec in sorted(ch_data.items(), key=lambda x: x[1], reverse=True)
     ]
+    return jsonify(result)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── DAU (Daily Active Users) ──────────────────────────────────────────────────
+@flask_app.route('/api/dau')
+@require_auth
+def api_dau():
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    try:
+        days = max(1, min(int(request.args.get('days', 30)), 365))
+    except ValueError:
+        return jsonify({'error': 'invalid days'}), 400
+    gid = str(guild_id)
+    now  = datetime.now(THAI_TZ)
+    result = []
+    for i in range(days - 1, -1, -1):
+        d = (now - timedelta(days=i)).strftime('%Y-%m-%d')
+        dau   = len(daily_unique.get(gid, {}).get(d, []))
+        joins = daily_activity.get(gid, {}).get(d, 0)
+        result.append({'date': d, 'dau': dau, 'joins': joins})
+    return jsonify(result)
+
+# ── Leaderboard with period ───────────────────────────────────────────────────
+@flask_app.route('/api/leaderboard')
+@require_auth
+def api_leaderboard():
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid    = str(guild_id)
+    period = request.args.get('period', '7d')
+    now    = datetime.now(THAI_TZ)
+    if period == '7d':
+        # fast path — use weekly_stats in-memory
+        combined = {
+            uid: {'name': v['name'], 'seconds': v['seconds']}
+            for uid, v in weekly_stats.get(gid, {}).items()
+        }
+    else:
+        days_map = {'30d': 30, '90d': 90}
+        cutoff   = now - timedelta(days=days_map.get(period, 36500))
+        combined = {}
+        for s in session_history:
+            if s.get('guild_id') != gid:
+                continue
+            try:
+                jt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+                if jt < cutoff:
+                    continue
+            except Exception:
+                continue
+            uid = s.get('uid', '')
+            if uid not in combined:
+                combined[uid] = {'name': s.get('name', 'Unknown'), 'seconds': 0}
+            combined[uid]['seconds'] += s.get('seconds', 0)
+            combined[uid]['name']     = s.get('name', combined[uid]['name'])
+    # add active sessions
+    for (gid2, mid2), (dname, jt, _) in list(voice_join_times.items()):
+        if str(gid2) != gid:
+            continue
+        uid = str(mid2)
+        elapsed = int((now - jt).total_seconds())
+        if uid not in combined:
+            combined[uid] = {'name': dname, 'seconds': 0}
+        combined[uid]['seconds'] += elapsed
+    ranked = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:10]
+    return jsonify([
+        {'uid': uid, 'name': v['name'], 'seconds': v['seconds'], 'duration': format_duration(v['seconds'])}
+        for uid, v in ranked
+    ])
+
+# ── Inactive users ────────────────────────────────────────────────────────────
+@flask_app.route('/api/inactive')
+@require_auth
+def api_inactive():
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        threshold_days = max(1, min(int(request.args.get('days', 14)), 365))
+    except ValueError:
+        return jsonify({'error': 'invalid days'}), 400
+    now     = datetime.now(THAI_TZ)
+    cutoff  = now - timedelta(days=threshold_days)
+    result  = []
+    for uid, udata in user_daily.get(gid, {}).items():
+        last_seen_str = udata.get('last_seen')
+        if not last_seen_str:
+            continue
+        try:
+            ls = datetime.fromisoformat(last_seen_str)
+            if ls.tzinfo is None:
+                ls = ls.replace(tzinfo=THAI_TZ)
+            if ls < cutoff:
+                days_inactive = (now - ls).days
+                result.append({
+                    'uid':          uid,
+                    'name':         udata.get('name', 'Unknown'),
+                    'last_seen':    ls.strftime('%Y-%m-%d'),
+                    'days_inactive': days_inactive,
+                })
+        except Exception:
+            continue
+    result.sort(key=lambda x: x['days_inactive'], reverse=True)
+    return jsonify(result[:20])
+
+# ── Retention (week-over-week) ────────────────────────────────────────────────
+@flask_app.route('/api/retention')
+@require_auth
+def api_retention():
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        num_weeks = max(2, min(int(request.args.get('weeks', 8)), 26))
+    except ValueError:
+        return jsonify({'error': 'invalid weeks'}), 400
+    now = datetime.now(THAI_TZ)
+    # Build weekly uid sets from session_history
+    weeks = []
+    for w in range(num_weeks - 1, -1, -1):
+        week_end   = now - timedelta(weeks=w)
+        week_start = week_end - timedelta(weeks=1)
+        uids = set()
+        for s in session_history:
+            if s.get('guild_id') != gid:
+                continue
+            try:
+                jt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+                if week_start <= jt < week_end:
+                    uids.add(s.get('uid', ''))
+            except Exception:
+                continue
+        weeks.append({'week_start': week_start.strftime('%Y-%m-%d'), 'uids': uids})
+    result = []
+    for i, w in enumerate(weeks):
+        prev_uids = weeks[i - 1]['uids'] if i > 0 else set()
+        retained  = len(w['uids'] & prev_uids) if prev_uids else 0
+        pct       = round(retained / len(prev_uids) * 100) if prev_uids else None
+        result.append({
+            'week_start':     w['week_start'],
+            'active_count':   len(w['uids']),
+            'retained_count': retained,
+            'retention_pct':  pct,
+        })
     return jsonify(result)
 # ─────────────────────────────────────────────────────────────────────────────
 

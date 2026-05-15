@@ -5,7 +5,7 @@
 <title>Member Profile</title>
 <style>
   :root{--bg:#1e1f22;--surface:#2b2d31;--card:#313338;--border:#3f4147;
-        --text:#dbdee1;--muted:#949ba4;--accent:#5865f2;--green:#23a559;}
+        --text:#dbdee1;--muted:#949ba4;--accent:#5865f2;--green:#23a559;--yellow:#f0b132;--red:#f85149;}
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;font-size:14px;}
   header{background:var(--surface);border-bottom:1px solid var(--border);
@@ -13,18 +13,23 @@
   .back{color:var(--accent);text-decoration:none;font-size:13px;}
   .back:hover{text-decoration:underline;}
   header h1{font-size:17px;font-weight:700;}
-  main{max-width:800px;margin:0 auto;padding:24px 16px;display:grid;gap:16px;}
+  main{max-width:860px;margin:0 auto;padding:24px 16px;display:grid;gap:16px;}
   .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px;}
   .card-title{font-size:11px;font-weight:700;text-transform:uppercase;
               letter-spacing:.6px;color:var(--muted);margin-bottom:14px;}
   .hero{display:flex;align-items:center;gap:20px;}
   .avatar{width:64px;height:64px;border-radius:50%;background:var(--accent);
-          display:flex;align-items:center;justify-content:center;font-size:28px;}
+          display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;}
   .hero-info h2{font-size:22px;font-weight:700;}
   .hero-info .sub{color:var(--muted);font-size:13px;margin-top:4px;}
-  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
+  .hero-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .badge{font-size:11px;padding:2px 8px;border-radius:20px;font-weight:600;border:1px solid transparent;}
+  .badge.green{background:rgba(35,165,89,.15);color:var(--green);border-color:rgba(35,165,89,.3);}
+  .badge.yellow{background:rgba(240,177,50,.15);color:var(--yellow);border-color:rgba(240,177,50,.3);}
+  .badge.blue{background:rgba(88,101,242,.15);color:var(--accent);border-color:rgba(88,101,242,.3);}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;}
   .stat-box{background:var(--surface);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:4px;}
-  .stat-box .val{font-size:20px;font-weight:700;color:var(--accent);}
+  .stat-box .val{font-size:18px;font-weight:700;color:var(--accent);}
   .stat-box .lbl{font-size:11px;color:var(--muted);}
   .heatmap-wrap{display:flex;align-items:flex-end;gap:3px;height:80px;}
   .heatmap-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;}
@@ -35,6 +40,14 @@
   tr:last-child td{border-bottom:none;}
   tr:hover td{background:var(--surface);}
   .empty{color:var(--muted);font-size:13px;}
+  /* channel breakdown */
+  .ch-row{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:6px;}
+  .ch-name{width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);flex-shrink:0;}
+  .ch-track{flex:1;height:6px;background:rgba(255,255,255,.08);border-radius:3px;overflow:hidden;}
+  .ch-fill{height:100%;background:var(--accent);border-radius:3px;}
+  .ch-time{font-size:11px;color:var(--muted);min-width:55px;text-align:right;flex-shrink:0;}
+  .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:600px){.two-col{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -44,43 +57,99 @@
   <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto">ออกจากระบบ</a>
 </header>
 <main>
+  <!-- Hero -->
   <div class="card"><div class="hero">
-    <div class="avatar">&#127908;</div>
-    <div class="hero-info"><h2 id="memberName">...</h2><div class="sub" id="memberSub"></div></div>
+    <div class="avatar" id="memberAvatar">🎤</div>
+    <div class="hero-info">
+      <h2 id="memberName">...</h2>
+      <div class="sub" id="memberSub"></div>
+      <div class="hero-badges" id="heroBadges"></div>
+    </div>
   </div></div>
-  <div class="card"><div class="card-title">สถิติสัปดาห์นี้</div><div class="stat-grid" id="statGrid"></div></div>
+
+  <!-- Stat boxes -->
   <div class="card">
-    <div class="card-title">ชั่วโมง Active มากสุด</div>
-    <div class="heatmap-wrap" id="heatChart"></div>
-    <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+    <div class="card-title">สถิติ</div>
+    <div class="stat-grid" id="statGrid"></div>
   </div>
+
+  <div class="two-col">
+    <!-- Peak hour heatmap -->
+    <div class="card">
+      <div class="card-title">ชั่วโมง Active มากสุด</div>
+      <div class="heatmap-wrap" id="heatChart"></div>
+      <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+    </div>
+
+    <!-- Channel breakdown -->
+    <div class="card">
+      <div class="card-title">Channel ที่ใช้บ่อย</div>
+      <div id="chBreakdown"><span class="empty">กำลังโหลด...</span></div>
+    </div>
+  </div>
+
+  <!-- Session history -->
   <div class="card"><div class="card-title">Session History</div>
     <table><thead><tr><th>ห้อง</th><th>เข้า</th><th>ออก</th><th>นาน</th></tr></thead>
     <tbody id="sessBody"><tr><td colspan="4" class="empty">กำลังโหลด...</td></tr></tbody></table>
   </div>
 </main>
 <script>
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function fmt(sec){if(!sec)return'-';const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60);return h?h+'h '+m+'m':m+'m';}
 const uid=location.pathname.split('/').pop();
 async function load(){
-  const r=await fetch('/api/profile/'+uid);const d=await r.json();
-  document.getElementById('pageTitle').textContent=d.name;
-  document.getElementById('memberName').textContent=d.name;
-  document.getElementById('memberSub').textContent='UID: '+d.uid;
+  let d;try{const r=await fetch('/api/profile/'+uid);if(!r.ok)throw new Error(r.status);d=await r.json();}
+  catch(e){document.getElementById('memberName').textContent='โหลดไม่ได้';return;}
+
+  document.getElementById('pageTitle').textContent=esc(d.name);
+  document.getElementById('memberName').textContent=esc(d.name);
+  document.getElementById('memberSub').textContent='UID: '+esc(d.uid)+(d.first_seen?' · เข้าครั้งแรก '+d.first_seen.slice(0,10):'');
+
+  // Badges
+  const badges=[];
+  if(d.streak_max>0)badges.push('<span class="badge yellow">🔥 streak max '+d.streak_max+' วัน</span>');
+  if(d.alltime_seconds)badges.push('<span class="badge green">⏱ '+fmt(d.alltime_seconds)+' ทั้งหมด</span>');
+  if(d.session_count)badges.push('<span class="badge blue">'+d.session_count+' sessions</span>');
+  document.getElementById('heroBadges').innerHTML=badges.join('');
+
+  // Stat boxes
   document.getElementById('statGrid').innerHTML=[
-    {val:d.total_duration,lbl:'เวลารวมสัปดาห์นี้'},
-    {val:d.session_count,lbl:'Sessions ทั้งหมด'},
+    {val:fmt(d.total_seconds)||'-',lbl:'เวลารวม (alltime)'},
+    {val:d.session_count||'-',lbl:'Sessions ทั้งหมด'},
     {val:d.peak_hour!==null?String(d.peak_hour).padStart(2,'0')+':00':'-',lbl:'ชั่วโมง Active สุด'},
     {val:d.avg_duration||'-',lbl:'เฉลี่ยต่อ session'},
-  ].map(s=>'<div class="stat-box"><div class="val">'+s.val+'</div><div class="lbl">'+s.lbl+'</div></div>').join('');
+    {val:d.streak_max||0,lbl:'Max streak (วัน)'},
+    {val:d.last_seen?d.last_seen.slice(0,10):'-',lbl:'ครั้งล่าสุด'},
+  ].map(s=>'<div class="stat-box"><div class="val">'+esc(String(s.val))+'</div><div class="lbl">'+esc(s.lbl)+'</div></div>').join('');
+
+  // Peak hour chart
   const hc=d.hour_counts;const max=Math.max(...Object.values(hc).map(Number),1);
   const chart=document.getElementById('heatChart');chart.innerHTML='';
   for(let h=0;h<24;h++){const count=Number(hc[String(h)]||0);const pct=Math.round((count/max)*100);
     const bar=document.createElement('div');bar.className='heatmap-bar';
     bar.style.cssText='background:rgba(88,101,242,'+(0.15+(pct/100)*0.85).toFixed(2)+');height:'+Math.max(pct,2)+'%';
     bar.title=String(h).padStart(2,'0')+':00 — '+count+' sessions';chart.appendChild(bar);}
+
+  // Channel breakdown
+  const chDiv=document.getElementById('chBreakdown');
+  const chSecs=d.channel_seconds||{};
+  const chEntries=Object.entries(chSecs).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  if(!chEntries.length){chDiv.innerHTML='<span class="empty">ยังไม่มีข้อมูล</span>';}
+  else{
+    const maxCh=chEntries[0][1];
+    chDiv.innerHTML=chEntries.map(([ch,sec])=>{
+      const pct=Math.round(sec/maxCh*100);
+      return'<div class="ch-row"><div class="ch-name"># '+esc(ch)+'</div>'
+        +'<div class="ch-track"><div class="ch-fill" style="width:'+pct+'%"></div></div>'
+        +'<div class="ch-time">'+fmt(sec)+'</div></div>';
+    }).join('');
+  }
+
+  // Sessions
   const body=document.getElementById('sessBody');
-  if(!d.sessions.length){body.innerHTML='<tr><td colspan="4" class="empty">ยังไม่มีข้อมูล</td></tr>';return;}
-  body.innerHTML=d.sessions.map(s=>'<tr><td>'+s.channel+'</td><td style="color:var(--muted)">'+s.join+'</td><td style="color:var(--muted)">'+s.leave+'</td><td>'+s.duration+'</td></tr>').join('');
+  if(!d.sessions||!d.sessions.length){body.innerHTML='<tr><td colspan="4" class="empty">ยังไม่มีข้อมูล</td></tr>';return;}
+  body.innerHTML=d.sessions.map(s=>'<tr><td>'+esc(s.channel)+'</td><td style="color:var(--muted)">'+esc(s.join)+'</td><td style="color:var(--muted)">'+esc(s.leave)+'</td><td>'+esc(s.duration)+'</td></tr>').join('');
 }
 load();
 </script>
