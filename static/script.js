@@ -20,6 +20,13 @@ function showToast(msg,err=false){
   const t=document.getElementById('toast');t.textContent=msg;
   t.className='toast show'+(err?' err':'');setTimeout(()=>t.className='toast',2200);
 }
+function withLoading(btn,fn){
+  if(!btn)return fn();
+  const orig=btn.innerHTML;
+  btn.disabled=true;btn.classList.add('loading');
+  btn.innerHTML='<i class="ph-bold ph-circle-notch"></i> กำลังบันทึก...';
+  return Promise.resolve(fn()).finally(()=>{btn.disabled=false;btn.classList.remove('loading');btn.innerHTML=orig;});
+}
 function buildUI(){
   // #10 — toggle inputs: aria-label for screen readers (visible label is in .toggle-label span)
   document.getElementById('toggleGrid').innerHTML=TOGGLES.map(t=>`
@@ -53,18 +60,17 @@ let currentGuildId = window.CURRENT_GUILD_ID || '';
 let isOwner=false;
 function applyOwnerUI(owner){
   isOwner=owner;
-  // ซ่อน owner-only sections สำหรับ guild_admin
   document.querySelectorAll('.owner-only').forEach(el=>{
     el.style.display=owner?'':'none';
   });
-  // แสดง badge
-  // #12 — role badge: emoji decorative, text for screen readers
   const badge=document.getElementById('roleBadge');
   if(badge){
-    const emoji=owner?'👑':'🛡️';const label=owner?'Owner':'Guild Admin';
-    badge.innerHTML='<span aria-hidden="true">'+emoji+'</span> '+label;
+    const iconClass=owner?'ph-crown':'ph-shield-check';
+    const label=owner?'Owner':'Guild Admin';
+    badge.innerHTML='<i class="ph-bold '+iconClass+'" aria-hidden="true"></i> '+label;
     badge.setAttribute('aria-label',label);
-    badge.style.background=owner?'#f0b232':'#5865f2';
+    badge.style.background=owner?'#7d5300':'#3730a3';
+    badge.style.color='white';
   }
 }
 async function loadConfig(){
@@ -158,35 +164,41 @@ async function toggleConfig(key,val){
     showToast('บันทึกแล้ว');
   }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
 }
-async function saveNums(){
-  const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
-  try{
-    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-    showToast('บันทึกแล้ว');
-  }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
-}
-async function saveSpam(){
-  const p={};SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
-  try{
-    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-    showToast('บันทึก Anti-spam แล้ว');
-  }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
-}
-async function saveChannels(){
-  const p={channel_voice:document.getElementById('ch_voice').value,
-           channel_content:document.getElementById('ch_content').value,
-           channel_stats:document.getElementById('ch_stats').value};
-  try{
-    if(currentGuildId){
-      const sel=document.getElementById('guildSelect');
-      const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
-      await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
-      showToast('บันทึก Channel Routing สำหรับ '+name);
-    } else {
+async function saveNums(btn){
+  withLoading(btn,async()=>{
+    const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
+    try{
       await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-      showToast('บันทึก Global Channel Routing แล้ว');
-    }
-  }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
+      showToast('บันทึกแล้ว');
+    }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
+  });
+}
+async function saveSpam(btn){
+  withLoading(btn,async()=>{
+    const p={};SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
+    try{
+      await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+      showToast('บันทึก Anti-spam แล้ว');
+    }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
+  });
+}
+async function saveChannels(btn){
+  withLoading(btn,async()=>{
+    const p={channel_voice:document.getElementById('ch_voice').value,
+             channel_content:document.getElementById('ch_content').value,
+             channel_stats:document.getElementById('ch_stats').value};
+    try{
+      if(currentGuildId){
+        const sel=document.getElementById('guildSelect');
+        const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
+        await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
+        showToast('บันทึก Channel Routing สำหรับ '+name);
+      }else{
+        await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+        showToast('บันทึก Global Channel Routing แล้ว');
+      }
+    }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
+  });
 }
 async function action(type){
   const body=JSON.stringify({guild_id:currentGuildId||null});
@@ -303,8 +315,10 @@ function toggleTheme(){
   const light=document.body.classList.toggle('light');
   localStorage.setItem('theme',light?'light':'dark');
   const btn=document.getElementById('themeBtn');
-  btn.innerHTML='<span aria-hidden="true">'+(light?'☀️':'🌙')+'</span>';
-  btn.setAttribute('aria-label','สลับธีม');
+  btn.innerHTML=light
+    ?'<i class="ph-bold ph-sun" aria-hidden="true"></i>'
+    :'<i class="ph-bold ph-moon" aria-hidden="true"></i>';
+  btn.setAttribute('aria-label',light?'สลับเป็นธีมมืด':'สลับเป็นธีมสว่าง');
 }
 async function loadLogs(){
   try{
@@ -316,7 +330,7 @@ async function loadLogs(){
     document.getElementById('logBox').textContent='⚠ โหลด log ไม่ได้';
   }
 }
-if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');const btn=document.getElementById('themeBtn');btn.innerHTML='<span aria-hidden="true">☀️</span>';btn.setAttribute('aria-label','สลับธีม');}
+if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');const btn=document.getElementById('themeBtn');btn.innerHTML='<i class="ph-bold ph-sun" aria-hidden="true"></i>';btn.setAttribute('aria-label','สลับเป็นธีมมืด');}
 
 // ── Sidebar navigation ──
 function toggleSidebar(){

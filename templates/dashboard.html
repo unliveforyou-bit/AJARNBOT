@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>VoiceLog Bot Dashboard</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css">
 </head>
 <body>
 <div class="app-layout">
@@ -15,43 +16,43 @@
 <!-- Sidebar -->
 <nav class="sidebar" id="sidebar" aria-label="เมนูหลัก">
   <a href="#" class="sidebar-brand" aria-label="VoiceLog Bot">
-    <div class="sidebar-brand-icon" aria-hidden="true">🎤</div>
+    <div class="sidebar-brand-icon" aria-hidden="true"><i class="ph-bold ph-microphone"></i></div>
     <span class="sidebar-brand-name">VoiceLog</span>
   </a>
 
   <div class="sidebar-section">
     <span class="sidebar-section-label">ภาพรวม</span>
     <ul class="sidebar-nav">
-      <li><a href="#ct-status-section">📊 สถานะ Bot</a></li>
-      <li><a href="#ct-heatmap-section">🔥 Heatmap</a></li>
-      <li><a href="#ct-voice-section">🎙️ Voice Live</a></li>
+      <li><a href="#ct-status-section"><i class="ph-bold ph-chart-bar" aria-hidden="true"></i> สถานะ Bot</a></li>
+      <li><a href="#ct-heatmap-section"><i class="ph-bold ph-fire" aria-hidden="true"></i> Heatmap</a></li>
+      <li><a href="#ct-voice-section"><i class="ph-bold ph-microphone-stage" aria-hidden="true"></i> Voice Live</a></li>
     </ul>
   </div>
 
   <div class="sidebar-section">
     <span class="sidebar-section-label">การตั้งค่า</span>
     <ul class="sidebar-nav">
-      <li><a href="#ct-announce-section">🔔 การแจ้งเตือน</a></li>
-      <li><a href="#ct-content-section">🎭 มุข &amp; Trivia</a></li>
-      <li><a href="#ct-routing-section">📡 Channel Routing</a></li>
-      <li><a href="#ct-spam-section">🛡️ Anti-Spam</a></li>
+      <li><a href="#ct-announce-section"><i class="ph-bold ph-bell" aria-hidden="true"></i> การแจ้งเตือน</a></li>
+      <li><a href="#ct-content-section"><i class="ph-bold ph-smiley" aria-hidden="true"></i> มุข &amp; Trivia</a></li>
+      <li><a href="#ct-routing-section"><i class="ph-bold ph-plugs-connected" aria-hidden="true"></i> Channel Routing</a></li>
+      <li><a href="#ct-spam-section"><i class="ph-bold ph-shield" aria-hidden="true"></i> Anti-Spam</a></li>
     </ul>
   </div>
 
   <div class="sidebar-section">
     <span class="sidebar-section-label">ข้อมูล</span>
     <ul class="sidebar-nav">
-      <li><a href="#ct-stats-section">🏆 สถิติ</a></li>
-      <li><a href="#ct-votes-section">👍 คะแนนมุข</a></li>
-      <li><a href="#ct-history-section">📋 Session History</a></li>
-      <li><a href="#ct-logs-section">🖥️ Bot Logs</a></li>
+      <li><a href="#ct-stats-section"><i class="ph-bold ph-trophy" aria-hidden="true"></i> สถิติ</a></li>
+      <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
+      <li><a href="#ct-history-section"><i class="ph-bold ph-clipboard-text" aria-hidden="true"></i> Session History</a></li>
+      <li><a href="#ct-logs-section"><i class="ph-bold ph-terminal" aria-hidden="true"></i> Bot Logs</a></li>
     </ul>
   </div>
 
   <div class="sidebar-section">
     <span class="sidebar-section-label">การกระทำ</span>
     <ul class="sidebar-nav">
-      <li><a href="#ct-actions-section">⚡ Actions</a></li>
+      <li><a href="#ct-actions-section"><i class="ph-bold ph-lightning" aria-hidden="true"></i> Actions</a></li>
     </ul>
   </div>
 
@@ -73,7 +74,7 @@
   <!-- Header -->
   <header>
     <button class="menu-toggle" id="menuToggle" onclick="toggleSidebar()" aria-label="เปิด/ปิดเมนู" aria-expanded="false" aria-controls="sidebar">
-      <span aria-hidden="true">☰</span>
+      <i class="ph-bold ph-list" aria-hidden="true"></i>
     </button>
 
     <div class="header-status">
@@ -85,13 +86,13 @@
 
     <div class="header-spacer"></div>
 
-    <button id="themeBtn" onclick="toggleTheme()" aria-label="สลับธีม"><span aria-hidden="true">🌙</span></button>
+    <button id="themeBtn" onclick="toggleTheme()" aria-label="สลับเป็นธีมสว่าง"><i class="ph-bold ph-moon" aria-hidden="true"></i></button>
 
     <span id="roleBadge" role="img" style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;color:white;"></span>
 
     <nav aria-label="การนำทาง" style="display:contents">
-      <a href="/invite" target="_blank" class="invite-btn" aria-label="เพิ่ม Server เปิดในแท็บใหม่">
-        <span aria-hidden="true">+</span> เพิ่ม Server
+      <a href="/invite" target="_blank" rel="noopener noreferrer" class="invite-btn" aria-label="เพิ่ม Server เปิดในแท็บใหม่">
+        <i class="ph-bold ph-plus" aria-hidden="true"></i> เพิ่ม Server
       </a>
       <a href="/logout" class="logout-link">ออกจากระบบ</a>
     </nav>
@@ -103,7 +104,7 @@
     <!-- 1. สถานะ Bot -->
     <section class="card" id="ct-status-section" aria-labelledby="ct-status">
       <div class="card-header">
-        <div class="card-icon blue" aria-hidden="true">📊</div>
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-chart-bar"></i></div>
         <h2 class="card-title" id="ct-status">สถานะ Bot</h2>
       </div>
       <div class="stats-grid">
@@ -141,9 +142,9 @@
     <!-- 2. การแจ้งเตือน -->
     <section class="card owner-only" id="ct-announce-section" aria-labelledby="ct-announce">
       <div class="card-header">
-        <div class="card-icon yellow" aria-hidden="true">🔔</div>
+        <div class="card-icon yellow" aria-hidden="true"><i class="ph-bold ph-bell"></i></div>
         <h2 class="card-title" id="ct-announce">การแจ้งเตือน</h2>
-        <span style="font-size:11px;color:var(--yellow);font-weight:600"><span aria-hidden="true">👑</span> Owner</span>
+        <span style="font-size:11px;color:var(--yellow);font-weight:600"><i class="ph-bold ph-crown" aria-hidden="true"></i> Owner</span>
       </div>
       <div class="card-body">
         <div class="toggle-grid" id="toggleGrid"></div>
@@ -153,9 +154,9 @@
     <!-- 3. ส่งมุขและ Trivia -->
     <section class="card owner-only" id="ct-content-section" aria-labelledby="ct-content">
       <div class="card-header">
-        <div class="card-icon purple" aria-hidden="true">🎭</div>
+        <div class="card-icon purple" aria-hidden="true"><i class="ph-bold ph-smiley"></i></div>
         <h2 class="card-title" id="ct-content">ส่งมุขและ Trivia</h2>
-        <span style="font-size:11px;color:var(--yellow);font-weight:600"><span aria-hidden="true">👑</span> Owner</span>
+        <span style="font-size:11px;color:var(--yellow);font-weight:600"><i class="ph-bold ph-crown" aria-hidden="true"></i> Owner</span>
       </div>
       <div class="card-body">
         <div class="toggle-grid" style="margin-bottom:16px">
@@ -182,14 +183,14 @@
           </div>
         </div>
         <div class="config-grid" id="numGrid"></div>
-        <div class="btn-row"><button class="btn btn-primary" onclick="saveNums()">บันทึก</button></div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="saveNums(this)">บันทึก</button></div>
       </div>
     </section>
 
     <!-- 4. Channel Routing -->
     <section class="card" id="ct-routing-section" aria-labelledby="ct-routing">
       <div class="card-header">
-        <div class="card-icon blue" aria-hidden="true">📡</div>
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-plugs-connected"></i></div>
         <h2 class="card-title" id="ct-routing">Channel Routing — ต่อ Server</h2>
       </div>
       <div class="card-body">
@@ -213,23 +214,23 @@
             <select id="ch_stats" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:var(--radius);padding:8px 10px;width:100%;font-size:13px;font-family:inherit"><option value="">— ยังไม่เลือก —</option></select>
           </div>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-top:10px"><span aria-hidden="true">💡</span> Server ที่ไม่ได้ตั้งค่าแยก จะใช้ค่า Global แทน</div>
-        <div class="btn-row"><button class="btn btn-primary" onclick="saveChannels()">บันทึก</button></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:10px"><i class="ph-bold ph-info" aria-hidden="true"></i> Server ที่ไม่ได้ตั้งค่าแยก จะใช้ค่า Global แทน</div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="saveChannels(this)">บันทึก</button></div>
       </div>
     </section>
 
     <!-- 5. Actions -->
     <section class="card" id="ct-actions-section" aria-labelledby="ct-actions">
       <div class="card-header">
-        <div class="card-icon green" aria-hidden="true">⚡</div>
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-lightning"></i></div>
         <h2 class="card-title" id="ct-actions">การกระทำ</h2>
       </div>
       <div class="card-body">
         <div class="action-grid">
-          <button class="btn btn-success" onclick="action('joke')" aria-label="ส่งมุขเทส"><span aria-hidden="true">🎯</span> ส่งมุขเทส</button>
-          <button class="btn btn-success" onclick="action('trivia')" aria-label="ส่ง Trivia เทส"><span aria-hidden="true">🧩</span> ส่ง Trivia เทส</button>
-          <button class="btn btn-primary" onclick="action('rank')" aria-label="ส่ง rank ทันที"><span aria-hidden="true">📈</span> ส่ง !rank ทันที</button>
-          <button class="btn btn-warn" onclick="action('summary')" aria-label="ส่งสรุปสัปดาห์"><span aria-hidden="true">📊</span> ส่งสรุปสัปดาห์</button>
+          <button class="btn btn-success" onclick="action('joke')" aria-label="ส่งมุขเทส"><i class="ph-bold ph-target" aria-hidden="true"></i> ส่งมุขเทส</button>
+          <button class="btn btn-success" onclick="action('trivia')" aria-label="ส่ง Trivia เทส"><i class="ph-bold ph-puzzle-piece" aria-hidden="true"></i> ส่ง Trivia เทส</button>
+          <button class="btn btn-primary" onclick="action('rank')" aria-label="ส่ง rank ทันที"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> ส่ง !rank ทันที</button>
+          <button class="btn btn-warn" onclick="action('summary')" aria-label="ส่งสรุปสัปดาห์"><i class="ph-bold ph-chart-pie" aria-hidden="true"></i> ส่งสรุปสัปดาห์</button>
         </div>
       </div>
     </section>
@@ -237,7 +238,7 @@
     <!-- 6. Heatmap -->
     <section class="card" id="ct-heatmap-section" aria-labelledby="ct-heatmap">
       <div class="card-header">
-        <div class="card-icon red" aria-hidden="true">🔥</div>
+        <div class="card-icon red" aria-hidden="true"><i class="ph-bold ph-fire"></i></div>
         <h2 class="card-title" id="ct-heatmap">Voice Activity Heatmap — รายชั่วโมง</h2>
       </div>
       <div class="card-body">
@@ -250,7 +251,7 @@
     <div class="two-col">
       <section class="card" id="ct-voice-section" aria-labelledby="ct-voice" style="margin-bottom:0">
         <div class="card-header">
-          <div class="card-icon blue" aria-hidden="true">🎙️</div>
+          <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-microphone-stage"></i></div>
           <h2 class="card-title" id="ct-voice">ผู้ใช้ใน Voice ตอนนี้</h2>
         </div>
         <div class="card-body">
@@ -259,7 +260,7 @@
       </section>
       <section class="card" id="ct-stats-section" aria-labelledby="ct-stats" style="margin-bottom:0">
         <div class="card-header">
-          <div class="card-icon yellow" aria-hidden="true">🏆</div>
+          <div class="card-icon yellow" aria-hidden="true"><i class="ph-bold ph-trophy"></i></div>
           <h2 class="card-title" id="ct-stats">สถิติสัปดาห์นี้</h2>
         </div>
         <div class="card-body">
@@ -271,7 +272,7 @@
     <!-- 9. Votes -->
     <section class="card" id="ct-votes-section" aria-labelledby="ct-votes">
       <div class="card-header">
-        <div class="card-icon green" aria-hidden="true">👍</div>
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-thumbs-up"></i></div>
         <h2 class="card-title" id="ct-votes">คะแนนมุข</h2>
       </div>
       <div class="card-body">
@@ -283,21 +284,21 @@
     <!-- 10. Anti-Spam -->
     <section class="card owner-only" id="ct-spam-section" aria-labelledby="ct-spam">
       <div class="card-header">
-        <div class="card-icon red" aria-hidden="true">🛡️</div>
+        <div class="card-icon red" aria-hidden="true"><i class="ph-bold ph-shield"></i></div>
         <h2 class="card-title" id="ct-spam">Anti-Spam</h2>
-        <span style="font-size:11px;color:var(--yellow);font-weight:600"><span aria-hidden="true">👑</span> Owner</span>
+        <span style="font-size:11px;color:var(--yellow);font-weight:600"><i class="ph-bold ph-crown" aria-hidden="true"></i> Owner</span>
       </div>
       <div class="card-body">
         <div class="config-grid" id="spamGrid"></div>
         <div style="margin-top:10px;color:var(--muted);font-size:12px">บอทจะแจ้งเตือนถ้าใครเข้า-ออก Voice เกินจำนวนครั้งสูงสุดในช่วงเวลาที่กำหนด</div>
-        <div class="btn-row"><button class="btn btn-primary" onclick="saveSpam()">บันทึก</button></div>
+        <div class="btn-row"><button class="btn btn-primary" onclick="saveSpam(this)">บันทึก</button></div>
       </div>
     </section>
 
     <!-- 11. Session History -->
     <section class="card" id="ct-history-section" aria-labelledby="ct-history">
       <div class="card-header">
-        <div class="card-icon blue" aria-hidden="true">📋</div>
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-clipboard-text"></i></div>
         <h2 class="card-title" id="ct-history">Session History — ล่าสุด 50 รายการ</h2>
       </div>
       <div class="card-body" style="padding:0">
@@ -320,9 +321,9 @@
     <!-- 12. Bot Logs -->
     <section class="card" id="ct-logs-section" aria-labelledby="ct-logs">
       <div class="card-header">
-        <div class="card-icon blue" aria-hidden="true">🖥️</div>
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-terminal"></i></div>
         <h2 class="card-title" id="ct-logs">Bot Logs — ล่าสุด 100 บรรทัด</h2>
-        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadLogs()"><span aria-hidden="true">↻</span> Refresh</button>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadLogs()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
       </div>
       <div class="card-body" style="padding:16px">
         <div id="logBox" role="log" aria-live="polite" aria-label="Bot logs">กำลังโหลด...</div>
@@ -331,7 +332,7 @@
 
   </main>
 
-  <footer id="appFooter">AjarnBot · Built with discord.py + Flask · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank" aria-label="GitHub repository เปิดในแท็บใหม่">GitHub</a></footer>
+  <footer id="appFooter">AjarnBot · Built with discord.py + Flask · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository เปิดในแท็บใหม่">GitHub</a></footer>
 
 </div><!-- /main-wrapper -->
 </div><!-- /app-layout -->

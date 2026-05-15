@@ -296,6 +296,17 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.3.3 — Design system implementation (Phosphor icons + UX polish)
+> Full design system applied — no more emoji as icons, proper touch targets, loading states
+
+- 🎨 **Phosphor Icons** — ทุก emoji icon ในหน้า dashboard เปลี่ยนเป็น Phosphor Bold SVG font icons
+- 📱 **Touch targets** — `themeBtn`, `menuToggle` → 44×44px; `invite-btn` → 44px height (WCAG 2.5.5)
+- ⏳ **Loading states** — `saveNums`, `saveSpam`, `saveChannels` มี spinner + disabled state ระหว่าง fetch
+- 🔢 **Tabular nums** — stat values ใช้ `font-variant-numeric:tabular-nums` ป้องกัน layout shift
+- 🔴 **Role badge contrast** — Owner `#7d5300`, Guild Admin `#3730a3` → ≥7:1 contrast ratio ✓
+- ⬛ **Slider contrast** — unchecked track border เปลี่ยนเป็น `var(--muted-light)` ให้มองเห็นชัดขึ้น
+- 🔗 **Link security** — `rel="noopener noreferrer"` บน `target="_blank"` ทุกลิงก์
+
 ### v2.3.2 — Fix voice session duration reset to 0 after restart
 > Users already in voice no longer show 0 minutes after Railway redeploy
 
