@@ -40,6 +40,7 @@ DASHBOARD_API_KEY    = os.environ.get('DASHBOARD_API_KEY', '')
 DISCORD_CLIENT_ID    = os.environ.get('DISCORD_CLIENT_ID', '')
 DISCORD_CLIENT_SECRET = os.environ.get('DISCORD_CLIENT_SECRET', '')
 DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')
+DASHBOARD_BASE_URL   = os.environ.get('DASHBOARD_BASE_URL', 'https://ajarnbot.up.railway.app')
 # OWNER_IDS: comma-separated Discord user IDs who have full access (global config)
 OWNER_IDS = {uid.strip() for uid in os.environ.get('OWNER_IDS', '').split(',') if uid.strip()}
 
@@ -216,9 +217,10 @@ def load_trivia():
 # ==========================
 
 # ===== Voice Stats (Multi-guild) =====
-voice_join_times = {}   # {(guild_id, member_id): (display_name, join_time, channel_name)}
-weekly_stats     = {}   # {guild_id: {user_id: {'name': str, 'seconds': int}}}
-summary_sent     = {}   # {guild_id_str: bool} — tracks if summary already sent this week per guild
+voice_join_times  = {}   # {(guild_id, member_id): (display_name, join_time, channel_name)}
+weekly_stats      = {}   # {guild_id: {user_id: {'name': str, 'seconds': int}}}
+summary_sent      = {}   # {guild_id_str: bool} — tracks if summary already sent this week per guild
+daily_digest_sent = {}   # {guild_id_str: str} — date string "YYYY-MM-DD" of last digest sent
 
 def load_stats():
     global weekly_stats
@@ -742,27 +744,75 @@ async def weekly_summary_task():
         else:
             summary_sent[gid] = False
 
+# ── Feature 4: Daily digest — ส่ง embed สรุปประจำวันตอนเที่ยงคืน ──────────────
 @tasks.loop(hours=1)
 async def daily_backup_task():
     now = datetime.now(THAI_TZ)
     if now.hour != 0:
         return
+    today_str = now.strftime('%Y-%m-%d')
+    yesterday_str = (now - timedelta(days=1)).strftime('%Y-%m-%d')
     for guild in client.guilds:
+        gid = str(guild.id)
         channel = get_guild_ch(guild.id, 'stats')
         if not channel:
             continue
-        guild_id = str(guild.id)
-        combined = get_stats_for_period('week', guild_id=guild_id)
-        total_sessions = len([s for s in session_history if s.get('guild_id') == guild_id])
-        top3 = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:3]
-        lines = [f'📊 **Backup รายวัน** — {now.strftime("%Y-%m-%d")} — {guild.name}',
-                 f'Sessions รวม: {total_sessions}']
-        for i, (uid, d) in enumerate(top3):
-            lines.append(f'{i+1}. {d["name"]} — {format_duration(d["seconds"])}')
-        await channel.send('\n'.join(lines))
-    log('Daily backup sent to all guilds')
-    # Auto-purge sessions older than 90 days
-    if now.weekday() == 0:  # ทุกวันจันทร์
+        # ป้องกันส่งซ้ำถ้า task loop fire มากกว่า 1 ครั้งในชั่วโมงเดียวกัน
+        if daily_digest_sent.get(gid) == today_str:
+            continue
+        daily_digest_sent[gid] = today_str
+
+        # ── ข้อมูลวันที่ผ่านมา (yesterday) ──
+        today_sessions = [
+            s for s in session_history
+            if s.get('guild_id') == gid and s.get('join', '').startswith(yesterday_str)
+        ]
+        # ผู้ใช้ที่อยู่ voice วันนี้ + live sessions
+        combined_today = get_stats_for_period('today', guild_id=gid)
+        # ใช้ combined_today ถ้ามี ไม่งั้น fallback ไป session_history
+        if combined_today:
+            top5 = sorted(combined_today.items(), key=lambda x: x[1]['seconds'], reverse=True)[:5]
+            total_sec = sum(v['seconds'] for v in combined_today.values())
+        else:
+            # คำนวณจาก session_history
+            user_secs: dict = {}
+            for s in today_sessions:
+                uid = str(s.get('user_id', ''))
+                name = s.get('name', uid)
+                user_secs.setdefault(uid, {'name': name, 'seconds': 0})
+                user_secs[uid]['seconds'] += s.get('seconds', 0)
+            top5 = sorted(user_secs.items(), key=lambda x: x[1]['seconds'], reverse=True)[:5]
+            total_sec = sum(v['seconds'] for v in user_secs.values())
+
+        # ── ชั่วโมงที่คึกคักที่สุด (จาก hourly_activity) ──
+        guild_hourly = hourly_activity.get(gid, {})
+        peak_hour = max(guild_hourly, key=guild_hourly.get) if guild_hourly else None
+
+        # ── สร้างข้อความ ──
+        medals = ['1.', '2.', '3.']
+        lines = [
+            f'**สรุปประจำวัน {yesterday_str} — {guild.name}**',
+            f'เวลา Voice รวม: **{format_duration(total_sec)}**  |  Sessions: **{len(today_sessions)}**',
+        ]
+        if peak_hour is not None:
+            lines.append(f'ชั่วโมงคึกคักที่สุด: **{peak_hour}:00**')
+        if top5:
+            lines.append('\nTop Voice วันนี้:')
+            for i, (uid, d) in enumerate(top5):
+                prefix = medals[i] if i < 3 else f'{i+1}.'
+                lines.append(f'{prefix} {d["name"]}  {format_duration(d["seconds"])}')
+        else:
+            lines.append('ไม่มีใครเข้าห้อง Voice วันนี้')
+        lines.append(f'\nดูรายละเอียด: {DASHBOARD_BASE_URL}')
+        try:
+            await channel.send('\n'.join(lines))
+        except discord.HTTPException as e:
+            log(f'daily_backup_task: send failed for {guild.name}: {e}')
+
+    log('Daily digest sent to all guilds')
+
+    # Auto-purge sessions older than 90 days (ทุกจันทร์)
+    if now.weekday() == 0:
         cutoff = now - timedelta(days=90)
         before = len(session_history)
         session_history[:] = [
@@ -773,6 +823,7 @@ async def daily_backup_task():
         if purged > 0:
             save_history()
             log(f'Auto-purged {purged} sessions older than 90 days')
+# ─────────────────────────────────────────────────────────────────────────────
 
 # ===== Feature 6: Periodic event_counts save =====
 @tasks.loop(minutes=5)
@@ -884,6 +935,43 @@ async def on_ready():
     evict_stale_trackers.start()     # ← evict stale rate-limit dicts every 10 min
     await client.tree.sync()
 
+# ── Feature 2: Welcome message เมื่อ bot เข้า server ใหม่ ─────────────────────
+@client.event
+async def on_guild_join(guild: discord.Guild):
+    log(f'Joined new guild: {guild.name} ({guild.id})')
+    # หาช่องที่ส่งได้: system_channel ก่อน ไม่งั้นใช้ช่องแรกที่ bot พิมพ์ได้
+    target = guild.system_channel
+    if not target or not target.permissions_for(guild.me).send_messages:
+        target = next(
+            (ch for ch in guild.text_channels
+             if ch.permissions_for(guild.me).send_messages),
+            None
+        )
+    if not target:
+        return
+    invite_url = discord.utils.oauth_url(
+        str(client.user.id),
+        permissions=discord.Permissions(
+            send_messages=True, read_messages=True,
+            embed_links=True, read_message_history=True,
+            connect=True, view_channel=True,
+        ),
+    )
+    msg = (
+        f'**AjarnBot เข้าร่วม {guild.name} แล้ว!**\n'
+        f'บันทึกเวลาห้อง Voice อัตโนมัติ + ส่งมุข/Trivia + สรุปรายสัปดาห์\n\n'
+        f'**ขั้นตอนแรก:**\n'
+        f'1. ตั้งค่าช่องใน Dashboard → `/api/guild-config`\n'
+        f'2. เปิด Dashboard: {DASHBOARD_BASE_URL}\n'
+        f'3. `/rank` — ดูอันดับ Voice  |  `/stats` — สถิติตัวเอง\n\n'
+        f'หากต้องการเชิญไปเซิร์ฟเวอร์อื่น: {invite_url}'
+    )
+    try:
+        await target.send(msg)
+    except discord.HTTPException as e:
+        log(f'on_guild_join: failed to send welcome to {guild.name}: {e}')
+# ─────────────────────────────────────────────────────────────────────────────
+
 @client.tree.command(name="rank", description="แสดงอันดับ Voice")
 @app_commands.describe(period="ช่วงเวลา: today / week / month")
 @app_commands.choices(period=[
@@ -946,9 +1034,49 @@ async def slash_trivia_rank(interaction: discord.Interaction):
     lines.append('--------------------')
     await interaction.response.send_message('\n'.join(lines))
 
+# ── Feature 1: /stats — ดูสถิติ Voice ของตัวเอง ─────────────────────────────
+@client.tree.command(name="stats", description="ดูเวลา Voice ของตัวเอง")
+@app_commands.describe(period="ช่วงเวลา: today / week / month")
+@app_commands.choices(period=[
+    app_commands.Choice(name="วันนี้",     value="today"),
+    app_commands.Choice(name="สัปดาห์นี้", value="week"),
+    app_commands.Choice(name="เดือนนี้",  value="month"),
+])
+@app_commands.checks.cooldown(1, 15.0)
+async def slash_stats(interaction: discord.Interaction, period: str = "week"):
+    await interaction.response.defer(ephemeral=True)
+    gid = str(interaction.guild_id) if interaction.guild_id else None
+    uid = str(interaction.user.id)
+    combined = get_stats_for_period(period, guild_id=gid)
+    period_label = {"today": "วันนี้", "week": "สัปดาห์นี้", "month": "เดือนนี้"}.get(period, "สัปดาห์นี้")
+    user_data = combined.get(uid)
+    if not user_data:
+        await interaction.followup.send(f'ยังไม่มีข้อมูล Voice ของคุณ ({period_label})', ephemeral=True)
+        return
+    # คำนวณอันดับ
+    sorted_all = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
+    rank = next((i + 1 for i, (k, _) in enumerate(sorted_all) if k == uid), None)
+    total_server_sec = sum(v['seconds'] for v in combined.values())
+    pct = (user_data['seconds'] / total_server_sec * 100) if total_server_sec else 0
+    lines = [
+        f'**สถิติ Voice ของ {interaction.user.display_name} — {period_label}**',
+        f'เวลารวม: **{format_duration(user_data["seconds"])}**',
+        f'อันดับ: **#{rank}** จาก {len(combined)} คน',
+        f'สัดส่วน server: **{pct:.1f}%**',
+    ]
+    # แสดง live session ถ้ากำลังอยู่ใน voice
+    live_key = (interaction.guild_id, interaction.user.id) if interaction.guild_id else None
+    if live_key and live_key in voice_join_times:
+        _, join_t, ch_name = voice_join_times[live_key]
+        elapsed = int((datetime.now(THAI_TZ) - join_t).total_seconds())
+        lines.append(f'กำลังอยู่ใน **{ch_name}** — {format_duration(elapsed)} (session ปัจจุบัน)')
+    await interaction.followup.send('\n'.join(lines), ephemeral=True)
+# ─────────────────────────────────────────────────────────────────────────────
+
 @slash_rank.error
 @slash_joke.error
 @slash_trivia.error
+@slash_stats.error
 async def on_slash_cooldown(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
         await interaction.response.send_message(f'⏳ รอ {error.retry_after:.0f} วินาทีก่อน', ephemeral=True)
@@ -1659,6 +1787,65 @@ def api_votes_reset():
     joke_votes.clear()
     save_votes()
     return jsonify({'ok': True})
+
+# ── Feature 6: Export CSV ────────────────────────────────────────────────────
+@flask_app.route('/api/export/csv')
+@require_auth
+def api_export_csv():
+    """
+    ดาวน์โหลด session_history เป็น CSV
+    ?guild_id=... (required)  ?period=today|week|month|all  (default: all)
+    """
+    import csv, io
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    period = request.args.get('period', 'all').strip().lower()
+    now = datetime.now(THAI_TZ)
+    def _in_period(join_str):
+        if period == 'all':
+            return True
+        try:
+            dt = datetime.strptime(join_str, '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+        except Exception:
+            return True
+        if period == 'today':
+            return dt.date() == now.date()
+        if period == 'week':
+            return dt >= now - timedelta(days=now.weekday(), hours=now.hour,
+                                         minutes=now.minute, seconds=now.second)
+        if period == 'month':
+            return dt.year == now.year and dt.month == now.month
+        return True
+
+    rows = [
+        s for s in session_history
+        if s.get('guild_id') == guild_id and _in_period(s.get('join', ''))
+    ]
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['date', 'user_name', 'user_id', 'channel', 'duration_sec', 'duration_fmt'])
+    for s in rows:
+        join_str = s.get('join', '')
+        date_only = join_str.split(' ')[0] if join_str else ''
+        sec = s.get('seconds', 0)
+        writer.writerow([
+            date_only,
+            s.get('name', ''),
+            s.get('user_id', ''),
+            s.get('channel', ''),
+            sec,
+            format_duration(sec),
+        ])
+
+    filename = f'voice_history_{guild_id}_{period}_{now.strftime("%Y%m%d")}.csv'
+    return Response(
+        buf.getvalue(),
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+# ─────────────────────────────────────────────────────────────────────────────
 
 @flask_app.route('/api/trivia-scores')
 @require_auth
