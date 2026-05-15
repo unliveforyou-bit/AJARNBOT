@@ -28,11 +28,13 @@
   <h1>AjarnBot Dashboard</h1>
   <p class="sub">เข้าสู่ระบบเพื่อจัดการบอท</p>
   {{ discord_btn | safe }}
+  {% if show_pw %}
   <form method="POST" action="/login">
-    <input type="password" name="password" placeholder="รหัสผ่าน Dashboard" autofocus>
+    <input type="password" name="password" placeholder="รหัสผ่าน (Owner เท่านั้น)" autofocus>
     <button type="submit" class="btn-pw">เข้าสู่ระบบด้วยรหัสผ่าน</button>
     {{ error_msg | safe }}
   </form>
-  <p class="note">AjarnBot Dashboard</p>
+  {% endif %}
+  <p class="note">เข้าสู่ระบบด้วย Discord เพื่อจัดการ Server ของคุณ</p>
 </div>
 </body></html>

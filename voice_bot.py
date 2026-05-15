@@ -29,12 +29,14 @@ THAI_TZ = ZoneInfo('Asia/Bangkok')
 TOKEN                = os.environ['DISCORD_TOKEN']           # required
 VOICE_LOG_CHANNEL_ID = int(os.environ['VOICE_LOG_CHANNEL_ID'])  # required
 DASHBOARD_PORT       = int(os.environ.get('PORT', 5000))
-DASHBOARD_PASSWORD   = os.environ.get('DASHBOARD_PASSWORD', '')  # optional basic auth
-OUTBOUND_WEBHOOK_URL = os.environ.get('OUTBOUND_WEBHOOK_URL', '')  # optional outbound webhook
-DASHBOARD_API_KEY    = os.environ.get('DASHBOARD_API_KEY', '')     # optional API key for external access
-DISCORD_CLIENT_ID    = os.environ.get('DISCORD_CLIENT_ID', '')     # Discord OAuth app client ID
-DISCORD_CLIENT_SECRET = os.environ.get('DISCORD_CLIENT_SECRET', '')  # Discord OAuth app client secret
-DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')  # e.g. https://ajarnbot.up.railway.app/callback
+DASHBOARD_PASSWORD   = os.environ.get('DASHBOARD_PASSWORD', '')  # emergency owner access
+OUTBOUND_WEBHOOK_URL = os.environ.get('OUTBOUND_WEBHOOK_URL', '')
+DASHBOARD_API_KEY    = os.environ.get('DASHBOARD_API_KEY', '')
+DISCORD_CLIENT_ID    = os.environ.get('DISCORD_CLIENT_ID', '')
+DISCORD_CLIENT_SECRET = os.environ.get('DISCORD_CLIENT_SECRET', '')
+DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')
+# OWNER_IDS: comma-separated Discord user IDs who have full access (global config)
+OWNER_IDS = {uid.strip() for uid in os.environ.get('OWNER_IDS', '').split(',') if uid.strip()}
 
 # ===== Startup config validation =====
 _FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
@@ -749,33 +751,66 @@ flask_app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 flask_app.config['SESSION_COOKIE_SECURE'] = True
 flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
 
+# ===== Auth helpers =====
+def session_is_owner() -> bool:
+    """Owner = password login OR Discord user ID in OWNER_IDS env var"""
+    if flask_session.get('login_method') == 'password':
+        return True
+    uid = (flask_session.get('discord_user') or {}).get('id', '')
+    return uid in OWNER_IDS
+
+def session_admin_guild_ids() -> set:
+    """Discord guilds where current user has ADMINISTRATOR or MANAGE_GUILD"""
+    guilds = flask_session.get('discord_guilds', [])
+    return {g['id'] for g in guilds
+            if g.get('owner') or (int(g.get('permissions', 0)) & 0x28) != 0}
+
 def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not DASHBOARD_PASSWORD:
-            return f(*args, **kwargs)
-        # Allow X-API-Key header for external/programmatic access
+        # API key bypass (external integrations)
         if DASHBOARD_API_KEY and request.headers.get('X-API-Key') == DASHBOARD_API_KEY:
             return f(*args, **kwargs)
         if not flask_session.get('logged_in'):
             if request.path.startswith('/api/'):
-                return Response('Unauthorized', 401)
+                return jsonify({'error': 'Unauthorized'}), 401
             return redirect('/login')
         return f(*args, **kwargs)
     return decorated
 
+def require_owner(f):
+    """เฉพาะ owner เท่านั้น (global config, sensitive ops)"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if DASHBOARD_API_KEY and request.headers.get('X-API-Key') == DASHBOARD_API_KEY:
+            return f(*args, **kwargs)
+        if not flask_session.get('logged_in'):
+            return jsonify({'error': 'Unauthorized'}), 401
+        if not session_is_owner():
+            return jsonify({'error': 'Forbidden — owner only'}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+def require_guild_access(guild_id: str):
+    """ตรวจว่า current user มีสิทธิ์ใน guild นี้ (owner หรือ admin ของ guild)"""
+    if session_is_owner():
+        return True
+    return guild_id in session_admin_guild_ids()
+# ========================
+
 @flask_app.route('/login', methods=['GET', 'POST'])
 def login():
-    if not DASHBOARD_PASSWORD:
-        return redirect('/')
     discord_btn = '<a href="/login/discord" class="btn-discord"><svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>เข้าสู่ระบบด้วย Discord</a><div class="divider">หรือ</div>' if DISCORD_CLIENT_ID else ''
+    # Hide password form if no DASHBOARD_PASSWORD set
+    show_pw = bool(DASHBOARD_PASSWORD)
     if request.method == 'POST':
-        if request.form.get('password') == DASHBOARD_PASSWORD:
+        if DASHBOARD_PASSWORD and request.form.get('password') == DASHBOARD_PASSWORD:
             flask_session['logged_in'] = True
+            flask_session['login_method'] = 'password'
             flask_session.permanent = True
             return redirect('/')
-        return render_template('login.html', discord_btn=discord_btn, error_msg='<div class="err">รหัสผ่านไม่ถูกต้อง</div>')
-    return render_template('login.html', discord_btn=discord_btn, error_msg='')
+        return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw, error_msg='<div class="err">รหัสผ่านไม่ถูกต้อง</div>')
+    return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw, error_msg='')
 
 @flask_app.route('/login/discord')
 def login_discord():
@@ -1000,10 +1035,12 @@ def api_channels():
 @flask_app.route('/api/config', methods=['GET'])
 @require_auth
 def api_config_get():
-    return jsonify(bot_config)
+    data = dict(bot_config)
+    data['is_owner'] = session_is_owner()   # ส่งสถานะให้ frontend ปรับ UI
+    return jsonify(data)
 
 @flask_app.route('/api/config', methods=['POST'])
-@require_auth
+@require_owner   # global config = owner only
 def api_config_post():
     data = request.json or {}
     for key in bot_config:
@@ -1024,6 +1061,8 @@ def api_config_post():
 @require_auth
 def api_guild_config_get():
     guild_id = request.args.get('guild_id', '')
+    if guild_id and not require_guild_access(guild_id):
+        return jsonify({'error': 'Forbidden'}), 403
     cfg = guild_configs.get(str(guild_id), {
         'channel_voice': bot_config.get('channel_voice', ''),
         'channel_content': bot_config.get('channel_content', ''),
@@ -1038,6 +1077,8 @@ def api_guild_config_post():
     guild_id = str(data.get('guild_id', ''))
     if not guild_id:
         return jsonify({'ok': False, 'error': 'guild_id required'}), 400
+    if not require_guild_access(guild_id):
+        return jsonify({'error': 'Forbidden'}), 403
     if guild_id not in guild_configs:
         guild_configs[guild_id] = {}
     for ch_type in ('channel_voice', 'channel_content', 'channel_stats'):

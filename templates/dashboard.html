@@ -88,6 +88,7 @@
   <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
   <span id="clockThai" style="font-size:12px;color:var(--muted);margin-left:16px;font-family:monospace;letter-spacing:.5px"></span>
   <button id="themeBtn" onclick="toggleTheme()" style="margin-left:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;">🌙</button>
+  <span id="roleBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;color:white;margin-left:12px;"></span>
   <a href="/select-server" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto" title="เปลี่ยน Server">&#128279; เปลี่ยน Server</a>
   <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:12px">ออกจากระบบ</a>
 </header>
@@ -104,12 +105,12 @@
     <div class="uptime-box"><div class="val" id="evVideo">0</div><div class="lbl">กล้อง</div></div>
   </div>
 </div>
-<div class="card">
-  <div class="card-title">การแจ้งเตือน</div>
+<div class="card owner-only">
+  <div class="card-title">การแจ้งเตือน <span style="font-size:11px;color:#f0b232">👑 Owner</span></div>
   <div class="toggle-grid" id="toggleGrid"></div>
 </div>
-<div class="card">
-  <div class="card-title">ส่งมุขและ Trivia</div>
+<div class="card owner-only">
+  <div class="card-title">ส่งมุขและ Trivia <span style="font-size:11px;color:#f0b232">👑 Owner</span></div>
   <div class="toggle-grid" style="margin-bottom:14px">
     <div class="toggle-item">
       <span class="toggle-label">เปิดใช้งาน (รวม)</span>
@@ -187,8 +188,8 @@
   <div id="votesList" style="display:grid;gap:6px"></div>
   <div class="btn-row"><button class="btn btn-danger" onclick="resetVotes()">รีเซ็ตคะแนนทั้งหมด</button></div>
 </div>
-<div class="card">
-  <div class="card-title">⚙️ การตั้งค่าบอท — Anti-Spam</div>
+<div class="card owner-only">
+  <div class="card-title">⚙️ การตั้งค่าบอท — Anti-Spam <span style="font-size:11px;color:#f0b232">👑 Owner</span></div>
   <div class="config-grid" id="spamGrid"></div>
   <div style="margin-top:10px;color:var(--muted);font-size:12px">บอทจะแจ้งเตือนถ้าใครเข้า-ออก Voice เกินจำนวนครั้งสูงสุดในช่วงเวลาที่กำหนด</div>
   <div class="btn-row"><button class="btn btn-primary" onclick="saveSpam()">บันทึก</button></div>
@@ -262,7 +263,23 @@ function applyConfig(c){
   // channel dropdowns populated by loadChannelDropdowns()
 }
 let currentGuildId='{{ current_guild_id }}';
-async function loadConfig(){const r=await fetch('/api/config');applyConfig(await r.json());}
+let isOwner=false;
+function applyOwnerUI(owner){
+  isOwner=owner;
+  // ซ่อน owner-only sections สำหรับ guild_admin
+  document.querySelectorAll('.owner-only').forEach(el=>{
+    el.style.display=owner?'':'none';
+  });
+  // แสดง badge
+  const badge=document.getElementById('roleBadge');
+  if(badge){badge.textContent=owner?'👑 Owner':'🛡️ Guild Admin';badge.style.background=owner?'#f0b232':'#5865f2';}
+}
+async function loadConfig(){
+  const r=await fetch('/api/config');
+  const c=await r.json();
+  applyConfig(c);
+  applyOwnerUI(!!c.is_owner);
+}
 async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStats){
   const ids=['ch_voice','ch_content','ch_stats'];
   const saved=[String(savedVoice||''),String(savedContent||''),String(savedStats||'')];
