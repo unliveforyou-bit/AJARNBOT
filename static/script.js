@@ -203,7 +203,8 @@ async function saveNums(btn){
     const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
     try{
       const [url,opts]=configEndpoint(p);
-      await fetch(url,opts);
+      const r=await fetch(url,opts);
+      if(!r.ok)throw new Error(r.status);
       showToast('บันทึกแล้ว');
     }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
   });
@@ -213,7 +214,8 @@ async function saveSpam(btn){
     const p={};SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
     try{
       const [url,opts]=configEndpoint(p);
-      await fetch(url,opts);
+      const r=await fetch(url,opts);
+      if(!r.ok)throw new Error(r.status);
       showToast('บันทึก Anti-spam แล้ว');
     }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
   });
@@ -227,10 +229,12 @@ async function saveChannels(btn){
       if(currentGuildId){
         const sel=document.getElementById('guildSelect');
         const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
-        await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
+        const r=await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
+        if(!r.ok)throw new Error(r.status);
         showToast('บันทึก Channel Routing สำหรับ '+name);
       }else{
-        await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+        const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+        if(!r.ok)throw new Error(r.status);
         showToast('บันทึก Global Channel Routing แล้ว');
       }
     }catch(e){showToast('บันทึกไม่สำเร็จ',true);}

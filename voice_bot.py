@@ -1978,9 +1978,20 @@ def api_guild_config_get():
     if not require_guild_access(guild_id):
         return jsonify({'error': 'Forbidden'}), 403
     # Return effective config: per-guild overrides merged on top of global defaults
-    effective = {key: get_gc(guild_id, key) for key in GUILD_ADMIN_KEYS}
+    # NOTE: channel fields use per-guild value ONLY — no global fallback.
+    # Global VOICE_LOG_CHANNEL_ID belongs to a different guild so it would
+    # never match any option in the current guild's dropdown.
+    CHANNEL_KEYS = {'channel_voice', 'channel_content', 'channel_stats'}
+    per_guild = guild_configs.get(str(guild_id), {})
+    effective = {}
+    for key in GUILD_ADMIN_KEYS:
+        if key in CHANNEL_KEYS:
+            # Return explicitly saved value or None (not global fallback)
+            effective[key] = per_guild.get(key)
+        else:
+            effective[key] = get_gc(guild_id, key)
     # Also include raw per-guild overrides so frontend can show what's customised
-    effective['_overrides'] = guild_configs.get(str(guild_id), {})
+    effective['_overrides'] = per_guild
     return jsonify(effective)
 
 @flask_app.route('/api/guild-config', methods=['POST'])
