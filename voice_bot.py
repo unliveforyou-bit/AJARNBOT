@@ -36,6 +36,7 @@ HISTORY_FILE = os.path.join(DATA_DIR, 'session_history.json')
 VOTES_FILE   = os.path.join(DATA_DIR, 'joke_votes.json')
 LOG_FILE     = os.path.join(DATA_DIR, 'bot.log')
 TRIVIA_SCORES_FILE = os.path.join(DATA_DIR, 'trivia_scores.json')
+GUILD_CONFIGS_FILE = os.path.join(DATA_DIR, 'guild_configs.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 # =================
 
@@ -74,6 +75,20 @@ def save_config():
     with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
         json.dump(bot_config, f, ensure_ascii=False, indent=2)
 # ==================
+
+# ===== Per-guild Config =====
+guild_configs = {}  # {guild_id_str: {channel_voice, channel_content, channel_stats}}
+
+def load_guild_configs():
+    global guild_configs
+    if os.path.exists(GUILD_CONFIGS_FILE):
+        with open(GUILD_CONFIGS_FILE, encoding='utf-8') as f:
+            guild_configs = json.load(f)
+
+def save_guild_configs():
+    with open(GUILD_CONFIGS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(guild_configs, f, ensure_ascii=False, indent=2)
+# ============================
 
 # ===== Jokes / Trivia =====
 JOKES_FALLBACK = [
@@ -354,9 +369,11 @@ class VoiceBot(discord.ext.commands.Bot):
 client   = VoiceBot()
 bot_loop = None
 
-def ch_voice():   return client.get_channel(int(bot_config['channel_voice']))
-def ch_content(): return client.get_channel(int(bot_config['channel_content']))
-def ch_stats():   return client.get_channel(int(bot_config['channel_stats']))
+def get_guild_ch(guild_id, ch_type):
+    """Get channel for a specific guild. Falls back to global bot_config if not set per-guild."""
+    gid = str(guild_id) if guild_id else ''
+    cid = guild_configs.get(gid, {}).get(f'channel_{ch_type}') or bot_config.get(f'channel_{ch_type}')
+    return client.get_channel(int(cid)) if cid else None
 
 async def send_joke_with_vote(channel, category, joke):
     if '?' in joke:
@@ -428,17 +445,20 @@ async def send_content():
     # ไม่ส่งถ้าไม่มีใครอยู่ใน Voice channel เลย
     if not voice_join_times:
         return
-    channel = ch_content()
-    if not channel:
-        return
+    # ส่งแยกแต่ละ guild ที่มีคนใน voice
+    active_guilds = set(str(gid) for (gid, _) in voice_join_times.keys())
     trivia_list = load_trivia()
-    if trivia_list and random.random() < 0.5:
-        await _post_trivia(channel, trivia_list)
-    else:
-        jokes = load_jokes()
-        if jokes:
-            category, joke = random.choice(jokes)
-            await send_joke_with_vote(channel, category, joke)
+    jokes = load_jokes()
+    for gid in active_guilds:
+        channel = get_guild_ch(gid, 'content')
+        if not channel:
+            continue
+        if trivia_list and random.random() < 0.5:
+            await _post_trivia(channel, trivia_list)
+        else:
+            if jokes:
+                category, joke = random.choice(jokes)
+                await send_joke_with_vote(channel, category, joke)
 
 @tasks.loop(hours=1)
 async def weekly_summary_task():
@@ -446,9 +466,10 @@ async def weekly_summary_task():
     now = datetime.now(THAI_TZ)
     if now.weekday() == 0 and now.hour == bot_config['summary_hour']:
         if not summary_sent:
-            channel = ch_stats()
-            if channel:
-                await send_weekly_summary(channel)
+            for guild in client.guilds:
+                channel = get_guild_ch(guild.id, 'stats')
+                if channel:
+                    await send_weekly_summary(channel)
             weekly_stats.clear()
             save_stats()
             summary_sent = True
@@ -460,19 +481,20 @@ async def daily_backup_task():
     now = datetime.now(THAI_TZ)
     if now.hour != 0:
         return
-    channel = ch_stats()
-    if not channel:
-        return
-    guild_id = str(channel.guild.id) if channel.guild else None
-    combined = get_stats_for_period('week', guild_id=guild_id)
-    total_sessions = len(session_history)
-    top3 = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:3]
-    lines = [f'📊 **Backup รายวัน** — {now.strftime("%Y-%m-%d")}',
-             f'Sessions รวม: {total_sessions}']
-    for i, (uid, d) in enumerate(top3):
-        lines.append(f'{i+1}. {d["name"]} — {format_duration(d["seconds"])}')
-    await channel.send('\n'.join(lines))
-    log('Daily backup sent to Discord')
+    for guild in client.guilds:
+        channel = get_guild_ch(guild.id, 'stats')
+        if not channel:
+            continue
+        guild_id = str(guild.id)
+        combined = get_stats_for_period('week', guild_id=guild_id)
+        total_sessions = len([s for s in session_history if s.get('guild_id') == guild_id])
+        top3 = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:3]
+        lines = [f'📊 **Backup รายวัน** — {now.strftime("%Y-%m-%d")} — {guild.name}',
+                 f'Sessions รวม: {total_sessions}']
+        for i, (uid, d) in enumerate(top3):
+            lines.append(f'{i+1}. {d["name"]} — {format_duration(d["seconds"])}')
+        await channel.send('\n'.join(lines))
+    log('Daily backup sent to all guilds')
     # Auto-purge sessions older than 90 days
     if now.weekday() == 0:  # ทุกวันจันทร์
         cutoff = now - timedelta(days=90)
@@ -513,6 +535,7 @@ async def rotate_status():
 async def on_ready():
     load_stats()
     load_config()
+    load_guild_configs()
     load_hourly()
     load_history()
     load_votes()
@@ -674,7 +697,7 @@ async def on_raw_reaction_remove(payload):
 async def on_voice_state_update(member, before, after):
     if member.bot:
         return
-    channel = ch_voice()
+    channel = get_guild_ch(member.guild.id, 'voice')
     if channel is None:
         return
 
@@ -995,12 +1018,19 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="btn-row"><button class="btn btn-primary" onclick="saveNums()">บันทึก</button></div>
 </div>
 <div class="card">
-  <div class="card-title">Channel Routing — Channel IDs</div>
+  <div class="card-title">Channel Routing — ต่อ Server</div>
+  <div style="margin-bottom:12px">
+    <label style="font-size:12px;color:var(--muted)">เลือก Server ที่ต้องการตั้งค่า</label>
+    <select id="guildSelect" onchange="onGuildChange()" style="display:block;width:100%;margin-top:6px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:14px;cursor:pointer">
+      <option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>
+    </select>
+  </div>
   <div class="config-grid">
     <div class="config-item"><label>Voice Events</label><input type="text" id="ch_voice" placeholder="Channel ID"></div>
     <div class="config-item"><label>มุขและ Trivia</label><input type="text" id="ch_content" placeholder="Channel ID"></div>
     <div class="config-item"><label>Stats (!rank, สรุป)</label><input type="text" id="ch_stats" placeholder="Channel ID"></div>
   </div>
+  <div style="font-size:12px;color:var(--muted);margin-top:8px">💡 Server ที่ไม่ได้ตั้งค่าแยก จะใช้ค่า Global แทน</div>
   <div class="btn-row"><button class="btn btn-primary" onclick="saveChannels()">บันทึก</button></div>
 </div>
 <div class="card">
@@ -1105,7 +1135,24 @@ function applyConfig(c){
   const cv=document.getElementById('ch_voice');const cc=document.getElementById('ch_content');const cs=document.getElementById('ch_stats');
   if(cv)cv.value=c.channel_voice||'';if(cc)cc.value=c.channel_content||'';if(cs)cs.value=c.channel_stats||'';
 }
+let currentGuildId='';
 async function loadConfig(){const r=await fetch('/api/config');applyConfig(await r.json());}
+async function loadGuilds(){
+  try{
+    const r=await fetch('/api/guilds');const guilds=await r.json();
+    const sel=document.getElementById('guildSelect');
+    sel.innerHTML='<option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>'+guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+  }catch(e){}
+}
+async function onGuildChange(){
+  currentGuildId=document.getElementById('guildSelect').value;
+  if(!currentGuildId){loadConfig();return;}
+  const r=await fetch('/api/guild-config?guild_id='+currentGuildId);
+  const cfg=await r.json();
+  document.getElementById('ch_voice').value=cfg.channel_voice||'';
+  document.getElementById('ch_content').value=cfg.channel_content||'';
+  document.getElementById('ch_stats').value=cfg.channel_stats||'';
+}
 async function toggleConfig(key,val){
   const p={};p[key]=val;
   await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
@@ -1126,8 +1173,15 @@ async function saveChannels(){
            channel_content:document.getElementById('ch_content').value.trim(),
            channel_stats:document.getElementById('ch_stats').value.trim()};
   if(Object.values(p).some(v=>v&&isNaN(v))){showToast('Channel ID ต้องเป็นตัวเลข',true);return;}
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  showToast('บันทึก Channel Routing แล้ว');
+  if(currentGuildId){
+    const sel=document.getElementById('guildSelect');
+    const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
+    await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
+    showToast('บันทึก Channel Routing สำหรับ '+name);
+  } else {
+    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    showToast('บันทึก Global Channel Routing แล้ว');
+  }
 }
 async function action(type){
   const r=await fetch('/api/action/'+type,{method:'POST'});
@@ -1135,7 +1189,8 @@ async function action(type){
 }
 async function refreshStatus(){
   try{
-    const r=await fetch('/api/status');const d=await r.json();
+    const gp=currentGuildId?'?guild_id='+currentGuildId:'';
+    const r=await fetch('/api/status'+gp);const d=await r.json();
     document.getElementById('statusDot').className='status-dot'+(d.online?' online':'');
     document.getElementById('statusLabel').textContent=d.online?'ออนไลน์':'ออฟไลน์';
     document.getElementById('upVal').textContent=d.uptime||'-';
@@ -1156,7 +1211,8 @@ async function refreshStatus(){
   }catch(e){document.getElementById('statusLabel').textContent='กำลังเชื่อมต่อ...';}
 }
 async function loadHeatmap(){
-  const r=await fetch('/api/heatmap');const d=await r.json();
+  const gp=currentGuildId?'?guild_id='+currentGuildId:'';
+  const r=await fetch('/api/heatmap'+gp);const d=await r.json();
   // flatten multi-guild heatmap: sum all guilds
   const flat={};
   for(let h=0;h<24;h++)flat[String(h)]=0;
@@ -1174,7 +1230,8 @@ async function loadHeatmap(){
     bar.title=String(h).padStart(2,'0')+':00 — '+count+' joins';chart.appendChild(bar);}
 }
 async function loadHistory(){
-  const r=await fetch('/api/history');const d=await r.json();
+  const gp=currentGuildId?'?guild_id='+currentGuildId:'';
+  const r=await fetch('/api/history'+gp);const d=await r.json();
   const body=document.getElementById('historyBody');
   if(!d.length){body.innerHTML='<tr><td colspan="5" style="color:var(--muted);padding:12px">ยังไม่มีข้อมูล</td></tr>';return;}
   body.innerHTML=d.slice().reverse().slice(0,50).map(s=>
@@ -1209,7 +1266,7 @@ async function loadLogs(){
   }catch(e){document.getElementById('logBox').textContent='โหลด log ไม่ได้';}
 }
 if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');document.getElementById('themeBtn').textContent='☀️';}
-buildUI();loadConfig();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
+buildUI();loadConfig();loadGuilds();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
 updateClock();setInterval(updateClock,1000);
 setInterval(loadLogs,30000);
 setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);
@@ -1318,14 +1375,54 @@ def api_config_post():
         send_content.change_interval(minutes=int(bot_config['content_interval']))
     return jsonify({'ok': True})
 
+@flask_app.route('/api/guild-config', methods=['GET'])
+@require_auth
+def api_guild_config_get():
+    guild_id = request.args.get('guild_id', '')
+    cfg = guild_configs.get(str(guild_id), {
+        'channel_voice': bot_config.get('channel_voice', ''),
+        'channel_content': bot_config.get('channel_content', ''),
+        'channel_stats': bot_config.get('channel_stats', ''),
+    })
+    return jsonify(cfg)
+
+@flask_app.route('/api/guild-config', methods=['POST'])
+@require_auth
+def api_guild_config_post():
+    data = request.json or {}
+    guild_id = str(data.get('guild_id', ''))
+    if not guild_id:
+        return jsonify({'ok': False, 'error': 'guild_id required'}), 400
+    if guild_id not in guild_configs:
+        guild_configs[guild_id] = {}
+    for ch_type in ('channel_voice', 'channel_content', 'channel_stats'):
+        if ch_type in data:
+            val = data[ch_type]
+            if val:
+                try:
+                    guild_configs[guild_id][ch_type] = int(val)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                guild_configs[guild_id].pop(ch_type, None)
+    save_guild_configs()
+    return jsonify({'ok': True})
+
 @flask_app.route('/api/heatmap')
 @require_auth
 def api_heatmap():
+    guild_id = request.args.get('guild_id')
+    if guild_id:
+        return jsonify({guild_id: hourly_activity.get(guild_id, {str(h): 0 for h in range(24)})})
     return jsonify(hourly_activity)
 
 @flask_app.route('/api/history')
 @require_auth
 def api_history():
+    guild_id = request.args.get('guild_id')
+    if guild_id:
+        filtered = [s for s in session_history if s.get('guild_id') == guild_id]
+        return jsonify(filtered[-50:])
     return jsonify(session_history[-50:])
 
 @flask_app.route('/api/profile/<uid>')
