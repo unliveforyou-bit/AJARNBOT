@@ -425,6 +425,9 @@ async def _post_trivia(channel, trivia_list=None):
 async def send_content():
     if not bot_config['send_content']:
         return
+    # ไม่ส่งถ้าไม่มีใครอยู่ใน Voice channel เลย
+    if not voice_join_times:
+        return
     channel = ch_content()
     if not channel:
         return
