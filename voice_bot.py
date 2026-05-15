@@ -71,8 +71,10 @@ TRIVIA_SCORES_FILE  = os.path.join(DATA_DIR, 'trivia_scores.json')
 GUILD_CONFIGS_FILE  = os.path.join(DATA_DIR, 'guild_configs.json')
 EVENT_COUNTS_FILE        = os.path.join(DATA_DIR, 'event_counts.json')
 ACTIVE_SESSIONS_FILE     = os.path.join(DATA_DIR, 'active_voice_sessions.json')
-DAILY_FILE       = os.path.join(DATA_DIR, 'daily_activity.json')
-USER_DAILY_FILE  = os.path.join(DATA_DIR, 'user_daily.json')
+DAILY_FILE           = os.path.join(DATA_DIR, 'daily_activity.json')
+USER_DAILY_FILE      = os.path.join(DATA_DIR, 'user_daily.json')
+MILESTONES_FILE      = os.path.join(DATA_DIR, 'milestones.json')
+CHANNEL_ACTIVITY_FILE = os.path.join(DATA_DIR, 'channel_activity.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Warn early if no Railway persistent volume is configured
@@ -372,26 +374,27 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
     save_user_daily()
     save_active_sessions()   # ← persist immediately so restart restores correctly
 
-def record_leave(guild_id, member_id):
+def record_leave(guild_id, member_id) -> list:
+    """Record voice leave. Returns list of newly-hit milestone hours (empty if none)."""
     key = (guild_id, member_id)
     if key not in voice_join_times:
-        return
+        return []
     display_name, join_time, channel_name = voice_join_times.pop(key)
     save_active_sessions()   # ← remove this user from the active-sessions snapshot
     leave_time = datetime.now(THAI_TZ)
     elapsed    = int((leave_time - join_time).total_seconds())
     gid = str(guild_id)
+    uid = str(member_id)
     if gid not in weekly_stats:
         weekly_stats[gid] = {}
-    uid = str(member_id)
     if uid not in weekly_stats[gid]:
         weekly_stats[gid][uid] = {'name': display_name, 'seconds': 0}
     weekly_stats[gid][uid]['name']    = display_name
     weekly_stats[gid][uid]['seconds'] += elapsed
     save_stats()
     session_history.append({
-        'guild_id': str(guild_id),
-        'uid':      str(member_id),
+        'guild_id': gid,
+        'uid':      uid,
         'name':     display_name,
         'channel':  channel_name,
         'join':     join_time.strftime('%Y-%m-%d %H:%M'),
@@ -400,6 +403,15 @@ def record_leave(guild_id, member_id):
         'seconds':  elapsed,
     })
     save_history()
+    # Feature 6: update channel activity
+    if gid not in channel_activity:
+        channel_activity[gid] = {}
+    channel_activity[gid][channel_name] = channel_activity[gid].get(channel_name, 0) + elapsed
+    save_channel_activity()
+    # Feature 5: check milestones (only for sessions >= 1 min to avoid spam on micro-joins)
+    if elapsed >= 60:
+        return check_and_award_milestones(gid, uid)
+    return []
 # ==========================================
 
 # ===== Cooldown =====
@@ -426,6 +438,52 @@ def check_command_rate(user_id, cmd):
     command_rate_limit[key] = now
     return True
 # ====================
+
+# ===== Feature 4: Streak helper ==========================================
+def compute_streak(dates_dict: dict) -> int:
+    """
+    คำนวณ streak (วันต่อเนื่องที่เข้า Voice) จาก {YYYY-MM-DD: count}
+    นับจากวันนี้หรือเมื่อวานย้อนหลัง
+    """
+    if not dates_dict:
+        return 0
+    today = datetime.now(THAI_TZ).date()
+    streak = 0
+    check = today
+    # ถ้าวันนี้ยังไม่มีข้อมูล ลองเริ่มจากเมื่อวาน
+    if check.isoformat() not in dates_dict:
+        check = today - timedelta(days=1)
+    while check.isoformat() in dates_dict:
+        streak += 1
+        check -= timedelta(days=1)
+    return streak
+# =========================================================================
+
+# ===== Feature 5: Milestone helpers ======================================
+def get_user_alltime_seconds(guild_id: str, user_id: str) -> int:
+    """คำนวณเวลา Voice รวมทุกเวลาของ user ใน guild นั้น"""
+    total = sum(
+        s.get('seconds', 0) for s in session_history
+        if s.get('guild_id') == guild_id and s.get('uid') == user_id
+    )
+    return total
+
+def check_and_award_milestones(guild_id: str, user_id: str) -> list:
+    """
+    ตรวจว่า user ถึง milestone ใหม่หรือไม่
+    คืน list ของ milestone hours ที่เพิ่งผ่าน (empty ถ้าไม่มี)
+    """
+    gid, uid = str(guild_id), str(user_id)
+    total_sec = get_user_alltime_seconds(gid, uid)
+    total_hours = total_sec / 3600
+    awarded = milestones_awarded.get(gid, {}).get(uid, [])
+    new_hits = [h for h in VOICE_MILESTONES if h <= total_hours and h not in awarded]
+    if new_hits:
+        milestones_awarded.setdefault(gid, {}).setdefault(uid, [])
+        milestones_awarded[gid][uid].extend(new_hits)
+        save_milestones()
+    return new_hits
+# =========================================================================
 
 # ===== Uptime + event counter =====
 start_time   = datetime.now(THAI_TZ)
@@ -524,7 +582,46 @@ def save_user_daily():
     with _lock_user_daily:
         with open(USER_DAILY_FILE, 'w', encoding='utf-8') as f:
             json.dump(user_daily, f, ensure_ascii=False)
-# =================================
+
+# ===== Milestones (Feature 5) =====
+# milestones_awarded[guild_id][uid] = [hours_int, ...]  — milestones already announced
+VOICE_MILESTONES = [1, 5, 10, 25, 50, 100, 250, 500]
+milestones_awarded = {}
+_lock_milestones   = threading.Lock()
+
+def load_milestones():
+    global milestones_awarded
+    if os.path.exists(MILESTONES_FILE):
+        try:
+            with open(MILESTONES_FILE, encoding='utf-8') as f:
+                milestones_awarded = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_milestones failed: {e}')
+
+def save_milestones():
+    with _lock_milestones:
+        with open(MILESTONES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(milestones_awarded, f, ensure_ascii=False)
+
+# ===== Channel Activity (Feature 6) =====
+# channel_activity[guild_id][channel_name] = total_seconds
+channel_activity = {}
+_lock_channel_activity = threading.Lock()
+
+def load_channel_activity():
+    global channel_activity
+    if os.path.exists(CHANNEL_ACTIVITY_FILE):
+        try:
+            with open(CHANNEL_ACTIVITY_FILE, encoding='utf-8') as f:
+                channel_activity = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_channel_activity failed: {e}')
+
+def save_channel_activity():
+    with _lock_channel_activity:
+        with open(CHANNEL_ACTIVITY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(channel_activity, f, ensure_ascii=False)
+# =========================================
 
 # ===== Logging =====
 def log(msg):
@@ -834,6 +931,7 @@ async def save_event_counts_task():
     save_hourly()
     save_daily()
     save_user_daily()
+    save_channel_activity()
 # ==================================================
 
 # ===== Periodic eviction of in-memory rate-limit dicts =====
@@ -904,6 +1002,8 @@ async def on_ready():
     load_trivia_scores()
     load_daily()
     load_user_daily()
+    load_milestones()
+    load_channel_activity()
     load_event_counts()   # ← restore persisted event counters
     log(f'Bot ready: {client.user}')
     log(f'DATA_DIR: {DATA_DIR} ({"persistent volume" if os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") else "⚠️ ephemeral — data will be lost on redeploy!"})')
@@ -1064,6 +1164,11 @@ async def slash_stats(interaction: discord.Interaction, period: str = "week"):
         f'อันดับ: **#{rank}** จาก {len(combined)} คน',
         f'สัดส่วน server: **{pct:.1f}%**',
     ]
+    # Feature 4: streak
+    ud = (user_daily.get(gid) or {}).get(uid, {})
+    streak = compute_streak(ud.get('dates', {}))
+    if streak > 0:
+        lines.append(f'Streak: **{streak} วัน** {"🔥" * min(streak, 5)}')
     # แสดง live session ถ้ากำลังอยู่ใน voice
     live_key = (interaction.guild_id, interaction.user.id) if interaction.guild_id else None
     if live_key and live_key in voice_join_times:
@@ -1073,10 +1178,91 @@ async def slash_stats(interaction: discord.Interaction, period: str = "week"):
     await interaction.followup.send('\n'.join(lines), ephemeral=True)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── Feature 1: /help ──────────────────────────────────────────────────────────
+@client.tree.command(name="help", description="แสดงคำสั่งทั้งหมดของ bot")
+async def slash_help(interaction: discord.Interaction):
+    lines = [
+        '**AjarnBot — คำสั่งทั้งหมด**',
+        '',
+        '`/rank [period]` — อันดับ Voice ของ server (today/week/month)',
+        '`/stats [period]` — สถิติ Voice ของตัวเอง (ephemeral)',
+        '`/compare @user [period]` — เปรียบสถิติกับคนอื่น',
+        '`/joke` — รับมุขสุ่ม',
+        '`/trivia` — รับคำถาม Trivia',
+        '`/trivia-rank` — อันดับคะแนน Trivia',
+        '',
+        f'Dashboard: {DASHBOARD_BASE_URL}',
+    ]
+    await interaction.response.send_message('\n'.join(lines), ephemeral=True)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Feature 2: /compare @user ────────────────────────────────────────────────
+@client.tree.command(name="compare", description="เปรียบ Voice stats กับสมาชิกอื่น")
+@app_commands.describe(
+    member="สมาชิกที่อยากเปรียบ",
+    period="ช่วงเวลา: today / week / month",
+)
+@app_commands.choices(period=[
+    app_commands.Choice(name="วันนี้",     value="today"),
+    app_commands.Choice(name="สัปดาห์นี้", value="week"),
+    app_commands.Choice(name="เดือนนี้",  value="month"),
+])
+@app_commands.checks.cooldown(1, 15.0)
+async def slash_compare(interaction: discord.Interaction,
+                        member: discord.Member,
+                        period: str = "week"):
+    await interaction.response.defer()
+    gid  = str(interaction.guild_id) if interaction.guild_id else None
+    me   = str(interaction.user.id)
+    them = str(member.id)
+    period_label = {"today": "วันนี้", "week": "สัปดาห์นี้", "month": "เดือนนี้"}.get(period, "สัปดาห์นี้")
+
+    if me == them:
+        await interaction.followup.send('เปรียบกับตัวเองไม่ได้นะ', ephemeral=True)
+        return
+
+    combined = get_stats_for_period(period, guild_id=gid)
+    sorted_all = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
+    rank_map = {uid: i + 1 for i, (uid, _) in enumerate(sorted_all)}
+
+    def user_line(uid, display):
+        d = combined.get(uid)
+        if not d:
+            return f'**{display}**: ไม่มีข้อมูล ({period_label})'
+        r = rank_map.get(uid, '?')
+        ud = (user_daily.get(gid) or {}).get(uid, {})
+        streak = compute_streak(ud.get('dates', {}))
+        streak_txt = f'  🔥{streak}d' if streak > 0 else ''
+        return f'**{display}**: {format_duration(d["seconds"])}  |  อันดับ #{r}{streak_txt}'
+
+    me_line   = user_line(me,   interaction.user.display_name)
+    them_line = user_line(them, member.display_name)
+
+    # เปรียบเวลา
+    me_sec   = (combined.get(me)   or {}).get('seconds', 0)
+    them_sec = (combined.get(them) or {}).get('seconds', 0)
+    diff = abs(me_sec - them_sec)
+    if me_sec > them_sec:
+        verdict = f'{interaction.user.display_name} นำอยู่ {format_duration(diff)}'
+    elif them_sec > me_sec:
+        verdict = f'{member.display_name} นำอยู่ {format_duration(diff)}'
+    else:
+        verdict = 'เท่ากันพอดี!'
+
+    lines = [
+        f'**เปรียบ Voice — {period_label}**',
+        me_line,
+        them_line,
+        f'→ {verdict}',
+    ]
+    await interaction.followup.send('\n'.join(lines))
+# ─────────────────────────────────────────────────────────────────────────────
+
 @slash_rank.error
 @slash_joke.error
 @slash_trivia.error
 @slash_stats.error
+@slash_compare.error
 async def on_slash_cooldown(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
         await interaction.response.send_message(f'⏳ รอ {error.retry_after:.0f} วินาทีก่อน', ephemeral=True)
@@ -1195,7 +1381,7 @@ async def on_voice_state_update(member, before, after):
             spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
             await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
     elif before.channel is not None and after.channel is None:
-        record_leave(gid, member.id)
+        new_milestones = record_leave(gid, member.id)
         record_voice_event(gid, member.id)
         event_counts['leave'] += 1
         if get_gc(gid, 'announce_leave', True):
@@ -1205,9 +1391,23 @@ async def on_voice_state_update(member, before, after):
             spam_max = get_gc(gid, 'spam_max_events', SPAM_MAX_EVENTS)
             spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
             await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
+        # Feature 5: milestone announcements
+        if new_milestones:
+            stats_ch = get_guild_ch(gid, 'stats') or channel
+            for hours in sorted(new_milestones):
+                await stats_ch.send(
+                    f'🎉 **{member.display_name}** ใช้เวลา Voice รวมครบ **{hours} ชั่วโมง** แล้ว! ยอดเยี่ยม!'
+                )
     elif before.channel != after.channel:
-        record_leave(gid, member.id)
+        new_milestones = record_leave(gid, member.id)
         record_join(gid, member.id, member.display_name, after.channel.name)
+        # Feature 5: milestone announcements on channel switch too
+        if new_milestones:
+            stats_ch = get_guild_ch(gid, 'stats') or channel
+            for hours in sorted(new_milestones):
+                await stats_ch.send(
+                    f'🎉 **{member.display_name}** ใช้เวลา Voice รวมครบ **{hours} ชั่วโมง** แล้ว! ยอดเยี่ยม!'
+                )
         if get_gc(gid, 'announce_move', True):
             await channel.send(f'{member.display_name} ย้ายจาก {before.channel.name} ไป {after.channel.name}')
         fire_outbound_webhook('voice_move', {'user': member.display_name, 'from': before.channel.name, 'to': after.channel.name, 'guild': member.guild.name})
@@ -1833,7 +2033,7 @@ def api_export_csv():
         writer.writerow([
             date_only,
             s.get('name', ''),
-            s.get('user_id', ''),
+            s.get('uid', ''),   # fixed: was 'user_id', correct key is 'uid'
             s.get('channel', ''),
             sec,
             format_duration(sec),
@@ -1845,6 +2045,26 @@ def api_export_csv():
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': f'attachment; filename="{filename}"'},
     )
+
+# ── Feature 6: Per-channel stats ─────────────────────────────────────────────
+@flask_app.route('/api/channel-stats')
+@require_auth
+def api_channel_stats():
+    """
+    คืน voice time รวมแยกตาม channel สำหรับ guild นั้น
+    ?guild_id=... (required)
+    Response: [{"channel": str, "seconds": int, "duration": str}, ...]
+              เรียงจากมากไปน้อย
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    ch_data = channel_activity.get(guild_id, {})
+    result = [
+        {'channel': ch, 'seconds': sec, 'duration': format_duration(sec)}
+        for ch, sec in sorted(ch_data.items(), key=lambda x: x[1], reverse=True)
+    ]
+    return jsonify(result)
 # ─────────────────────────────────────────────────────────────────────────────
 
 @flask_app.route('/api/trivia-scores')
