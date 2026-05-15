@@ -159,15 +159,7 @@ def save_stats():
         with open(STATS_FILE, 'w', encoding='utf-8') as f:
             json.dump(weekly_stats, f, ensure_ascii=False, indent=2)
 
-def format_duration(seconds):
-    d = seconds // 86400
-    h = (seconds % 86400) // 3600
-    m = (seconds % 3600) // 60
-    if d > 0:
-        return f'{d} วัน {h} ชม. {m} นาที'
-    if h > 0:
-        return f'{h} ชม. {m} นาที'
-    return f'{m} นาที'
+from bot_utils import format_duration  # pure function — tested in tests/
 # =====================================
 
 # ===== Heatmap (Multi-guild) =====
@@ -349,41 +341,12 @@ def log(msg):
 # ===================
 
 # ===== Time-range stats helper =====
+import bot_utils as _bu
+
 def get_stats_for_period(period='week', guild_id=None):
-    """period: 'today', 'week', 'month'"""
-    now = datetime.now(THAI_TZ)
-    combined = {}
-    for s in session_history:
-        if guild_id and s.get('guild_id') != guild_id:
-            continue
-        try:
-            join_dt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
-        except Exception as e:
-            log(f'get_stats_for_period: bad join format {s.get("join")!r}: {e}')
-            continue
-        if period == 'today' and join_dt.date() != now.date():
-            continue
-        if period == 'week':
-            week_start = now - timedelta(days=now.weekday())
-            if join_dt.date() < week_start.date():
-                continue
-        if period == 'month' and (join_dt.year != now.year or join_dt.month != now.month):
-            continue
-        uid = s.get('uid', '')
-        name = s.get('name', '')
-        if uid not in combined:
-            combined[uid] = {'name': name, 'seconds': 0}
-        combined[uid]['seconds'] += s.get('seconds', 0)
-    # รวม live users
-    for (gid, mid), (name, join_time, _) in voice_join_times.items():
-        if guild_id and str(gid) != guild_id:
-            continue
-        elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
-        key = str(mid)
-        if key not in combined:
-            combined[key] = {'name': name, 'seconds': 0}
-        combined[key]['seconds'] += elapsed
-    return combined
+    """Wrapper — delegates pure logic to bot_utils (testable independently)"""
+    return _bu.get_stats_for_period(session_history, voice_join_times,
+                                    period=period, guild_id=guild_id)
 # ===================================
 
 # ===== Discord Bot =====
