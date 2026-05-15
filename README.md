@@ -296,6 +296,22 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.2.0 — Accessibility Round 2 (29 more WCAG 2.1 AA fixes)
+> 29 additional issues fixed — contrast, semantics, keyboard, touch targets, error handling
+
+- 🎨 **Contrast** — font-sizes 11px/10px → 12px ทั่วทั้ง UI; light mode `--muted` → `#374151` (5.8:1)
+- 🏗️ **Heading structure** — `.card-title` div → `<h2>` ทุก section (12 cards); navigate ด้วย heading key ได้แล้ว
+- 🗺️ **Landmarks** — ทุก card → `<section aria-labelledby>`, header controls → `<nav aria-label="การนำทาง">`
+- 🏷️ **Labels** — hardcoded toggle spans ได้ `id` + `aria-labelledby`; uptime boxes → `aria-labelledby` val↔lbl
+- 📋 **Table** — `<th scope="col">` ทุก column header; screen readers associate correctly แล้ว
+- 🔍 **Focus** — `header a:focus-visible`, `.config-item select:focus-visible`, switch input fix (`position:absolute`)
+- 📱 **Touch targets** — `#themeBtn`, `.invite-btn`, log Refresh button → min 44×44px
+- 📢 **Live regions** — `#logBox` ได้ `role="log" aria-live="polite"`; `<main>` ได้ `aria-busy` ระหว่าง fetch
+- 🎭 **Emoji** — logo `aria-hidden`, clock emoji ใน `innerHTML`, medal emoji + sr-only rank, vote emoji + sr-only label
+- 🔊 **Voice rows** — แต่ละ row ได้ `aria-label` อ่านรวม "ชื่อ อยู่ใน ห้อง นาน X"
+- ⌨️ **Heatmap** — bars ได้ `tabindex="0"` (keyboard accessible)
+- ⚠️ **Error handling** — `toggleConfig`, `saveNums`, `saveSpam`, `saveChannels` ได้ `try/catch` + toast error
+
 ### v2.1.0 — Accessibility (WCAG 2.1 AA)
 > Accessibility audit — 18 issues fixed across CSS, JS, and HTML
 

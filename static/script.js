@@ -38,7 +38,7 @@ function updateClock(){
   const now=new Date();
   const date=now.toLocaleDateString('th-TH',{timeZone:'Asia/Bangkok',day:'numeric',month:'short',year:'2-digit'});
   const time=now.toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
-  document.getElementById('clockThai').textContent='🕐 '+date+' '+time;
+  document.getElementById('clockThai').innerHTML='<span aria-hidden="true">🕐</span> '+date+' '+time;
 }
 function applyConfig(c){
   TOGGLES.forEach(t=>{const el=document.getElementById('toggle_'+t.key);if(el)el.checked=!!c[t.key];});
@@ -68,17 +68,21 @@ function applyOwnerUI(owner){
   }
 }
 async function loadConfig(){
-  const r=await fetch('/api/config');
-  const c=await r.json();
-  applyConfig(c);
-  applyOwnerUI(!!c.is_owner);
-  // update footer version
-  if(c.app_version){
-    const ft=document.getElementById('appFooter');
-    if(ft)ft.innerHTML='AjarnBot <span style="color:var(--accent);font-weight:700">v'+c.app_version+'</span>'
-      +' · '+c.app_build_date
-      +' · Built with discord.py + Flask'
-      +' · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a>';
+  document.querySelector('main').setAttribute('aria-busy','true');
+  try{
+    const r=await fetch('/api/config');
+    const c=await r.json();
+    applyConfig(c);
+    applyOwnerUI(!!c.is_owner);
+    if(c.app_version){
+      const ft=document.getElementById('appFooter');
+      if(ft)ft.innerHTML='AjarnBot <span style="color:var(--accent);font-weight:700">v'+c.app_version+'</span>'
+        +' · '+c.app_build_date
+        +' · Built with discord.py + Flask'
+        +' · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a>';
+    }
+  }finally{
+    document.querySelector('main').setAttribute('aria-busy','false');
   }
 }
 async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStats){
@@ -149,33 +153,40 @@ async function onGuildChange(){
 }
 async function toggleConfig(key,val){
   const p={};p[key]=val;
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  showToast('บันทึกแล้ว');
+  try{
+    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    showToast('บันทึกแล้ว');
+  }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
 }
 async function saveNums(){
   const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  showToast('บันทึกแล้ว');
+  try{
+    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    showToast('บันทึกแล้ว');
+  }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
 }
 async function saveSpam(){
   const p={};SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
-  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-  showToast('บันทึก Anti-spam แล้ว');
+  try{
+    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+    showToast('บันทึก Anti-spam แล้ว');
+  }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
 }
 async function saveChannels(){
   const p={channel_voice:document.getElementById('ch_voice').value,
            channel_content:document.getElementById('ch_content').value,
            channel_stats:document.getElementById('ch_stats').value};
-  // values from select are always valid IDs or empty
-  if(currentGuildId){
-    const sel=document.getElementById('guildSelect');
-    const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
-    await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
-    showToast('บันทึก Channel Routing สำหรับ '+name);
-  } else {
-    await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
-    showToast('บันทึก Global Channel Routing แล้ว');
-  }
+  try{
+    if(currentGuildId){
+      const sel=document.getElementById('guildSelect');
+      const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
+      await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
+      showToast('บันทึก Channel Routing สำหรับ '+name);
+    } else {
+      await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+      showToast('บันทึก Global Channel Routing แล้ว');
+    }
+  }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
 }
 async function action(type){
   const body=JSON.stringify({guild_id:currentGuildId||null});
@@ -203,13 +214,14 @@ async function refreshStatus(){
       vl.innerHTML='<span class="empty-msg">ไม่มีใครอยู่</span>';
     }else{
       // user rows — แสดงชื่อ + ห้อง + เวลา
-      const userRows=d.voice_users.map(u=>
-        '<div class="stat-row">'
-        +'<span class="stat-name">'+u.name+'</span>'
-        +(u.channel?'<span class="voice-ch"># '+u.channel+'</span>':'')
-        +'<span class="stat-time">'+u.duration+'</span>'
-        +'</div>'
-      ).join('');
+      const userRows=d.voice_users.map(u=>{
+        const rowLabel=u.name+(u.channel?' อยู่ใน '+u.channel:'')+' นาน '+u.duration;
+        return '<div class="stat-row" aria-label="'+rowLabel+'">'
+          +'<span class="stat-name" aria-hidden="true">'+u.name+'</span>'
+          +(u.channel?'<span class="voice-ch" aria-hidden="true"># '+u.channel+'</span>':'')
+          +'<span class="stat-time" aria-hidden="true">'+u.duration+'</span>'
+          +'</div>';
+      }).join('');
       // นับคนต่อห้อง → เรียงมากสุด
       const chMap={};
       d.voice_users.forEach(u=>{const c=u.channel||'?';chMap[c]=(chMap[c]||0)+1;});
@@ -225,9 +237,13 @@ async function refreshStatus(){
         +'<div class="ch-rank-divider">ลำดับห้องเสียงยอดนิยม</div>'
         +chRows;
     }
-    const medals=['🥇','🥈','🥉'];const sl=document.getElementById('statsList');
+    const medals=['🥇','🥈','🥉'];
+    const rankLabel=i=>medals[i]
+      ?'<span aria-hidden="true">'+medals[i]+'</span><span class="sr-only">'+(i+1)+'.</span>'
+      :(i+1)+'.';
+    const sl=document.getElementById('statsList');
     sl.innerHTML=d.weekly_stats.length===0?'<span class="empty-msg">ยังไม่มีข้อมูล</span>'
-      :d.weekly_stats.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+(medals[i]||(i+1)+'.')+'</span>'
+      :d.weekly_stats.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+rankLabel(i)+'</span>'
         +'<span class="stat-name"><a href="/profile/'+s.uid+'" target="_blank">'+s.name+'</a></span>'
         +'<span class="stat-time">'+s.time+'</span></div>').join('');
   }catch(e){document.getElementById('statusLabel').textContent='กำลังเชื่อมต่อ...';}
@@ -253,6 +269,7 @@ async function loadHeatmap(){
     bar.title=hLabel;
     // #15 — heatmap bars: role+aria-label for screen readers
     bar.setAttribute('role','img');bar.setAttribute('aria-label',hLabel);
+    bar.setAttribute('tabindex','0');
     chart.appendChild(bar);}
 }
 async function loadHistory(){
@@ -272,8 +289,8 @@ async function loadVotes(){
   el.innerHTML=d.slice(0,20).map(v=>
     '<div class="stat-row" style="gap:10px">'
     +'<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'+(v.filtered?';color:var(--red)':'')+'" title="'+v.joke+'">'+v.joke+'</span>'
-    +'<span style="color:var(--green);font-size:13px;min-width:36px;text-align:right">👍 '+v.up+'</span>'
-    +'<span style="color:var(--red);font-size:13px;min-width:36px;text-align:right">👎 '+v.down+'</span>'
+    +'<span style="color:var(--green);font-size:13px;min-width:36px;text-align:right"><span aria-hidden="true">👍</span><span class="sr-only">โหวตขึ้น:</span> '+v.up+'</span>'
+    +'<span style="color:var(--red);font-size:13px;min-width:36px;text-align:right"><span aria-hidden="true">👎</span><span class="sr-only">โหวตลง:</span> '+v.down+'</span>'
     +(v.filtered?'<span style="font-size:11px;color:var(--red);min-width:40px">กรองแล้ว</span>':'<span style="min-width:40px"></span>')
     +'</div>').join('');
 }
@@ -282,7 +299,13 @@ async function resetVotes(){
   await fetch('/api/votes/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
   showToast('รีเซ็ตแล้ว');loadVotes();
 }
-function toggleTheme(){const light=document.body.classList.toggle('light');localStorage.setItem('theme',light?'light':'dark');document.getElementById('themeBtn').textContent=light?'☀️':'🌙';}
+function toggleTheme(){
+  const light=document.body.classList.toggle('light');
+  localStorage.setItem('theme',light?'light':'dark');
+  const btn=document.getElementById('themeBtn');
+  btn.innerHTML='<span aria-hidden="true">'+(light?'☀️':'🌙')+'</span>';
+  btn.setAttribute('aria-label','สลับธีม');
+}
 async function loadLogs(){
   try{
     const r=await fetch('/api/logs');const d=await r.json();
@@ -290,11 +313,10 @@ async function loadLogs(){
     box.textContent=d.lines.join('\n')||'(ยังไม่มี log)';
     box.scrollTop=box.scrollHeight;
   }catch(e){
-    // #17 — error state announced as alert
-    const box=document.getElementById('logBox');box.setAttribute('role','alert');box.textContent='โหลด log ไม่ได้';
+    document.getElementById('logBox').textContent='⚠ โหลด log ไม่ได้';
   }
 }
-if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');document.getElementById('themeBtn').textContent='☀️';}
+if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');const btn=document.getElementById('themeBtn');btn.innerHTML='<span aria-hidden="true">☀️</span>';btn.setAttribute('aria-label','สลับธีม');}
 buildUI();loadConfig();loadGuilds();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
 updateClock();setInterval(updateClock,1000);
 setInterval(loadLogs,30000);
