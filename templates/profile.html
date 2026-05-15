@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Member Profile</title>
+<style>
+  :root{--bg:#1e1f22;--surface:#2b2d31;--card:#313338;--border:#3f4147;
+        --text:#dbdee1;--muted:#949ba4;--accent:#5865f2;--green:#23a559;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',sans-serif;font-size:14px;}
+  header{background:var(--surface);border-bottom:1px solid var(--border);
+         padding:16px 24px;display:flex;align-items:center;gap:12px;}
+  .back{color:var(--accent);text-decoration:none;font-size:13px;}
+  .back:hover{text-decoration:underline;}
+  header h1{font-size:17px;font-weight:700;}
+  main{max-width:800px;margin:0 auto;padding:24px 16px;display:grid;gap:16px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:20px;}
+  .card-title{font-size:11px;font-weight:700;text-transform:uppercase;
+              letter-spacing:.6px;color:var(--muted);margin-bottom:14px;}
+  .hero{display:flex;align-items:center;gap:20px;}
+  .avatar{width:64px;height:64px;border-radius:50%;background:var(--accent);
+          display:flex;align-items:center;justify-content:center;font-size:28px;}
+  .hero-info h2{font-size:22px;font-weight:700;}
+  .hero-info .sub{color:var(--muted);font-size:13px;margin-top:4px;}
+  .stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
+  .stat-box{background:var(--surface);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:4px;}
+  .stat-box .val{font-size:20px;font-weight:700;color:var(--accent);}
+  .stat-box .lbl{font-size:11px;color:var(--muted);}
+  .heatmap-wrap{display:flex;align-items:flex-end;gap:3px;height:80px;}
+  .heatmap-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;}
+  .heatmap-labels{display:flex;justify-content:space-between;margin-top:4px;color:var(--muted);font-size:10px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{color:var(--muted);text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);font-weight:600;}
+  td{padding:7px 10px;border-bottom:1px solid var(--border);}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:var(--surface);}
+  .empty{color:var(--muted);font-size:13px;}
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">&#8592; Dashboard</a>
+  <h1 id="pageTitle">Member Profile</h1>
+  <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto">ออกจากระบบ</a>
+</header>
+<main>
+  <div class="card"><div class="hero">
+    <div class="avatar">&#127908;</div>
+    <div class="hero-info"><h2 id="memberName">...</h2><div class="sub" id="memberSub"></div></div>
+  </div></div>
+  <div class="card"><div class="card-title">สถิติสัปดาห์นี้</div><div class="stat-grid" id="statGrid"></div></div>
+  <div class="card">
+    <div class="card-title">ชั่วโมง Active มากสุด</div>
+    <div class="heatmap-wrap" id="heatChart"></div>
+    <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+  </div>
+  <div class="card"><div class="card-title">Session History</div>
+    <table><thead><tr><th>ห้อง</th><th>เข้า</th><th>ออก</th><th>นาน</th></tr></thead>
+    <tbody id="sessBody"><tr><td colspan="4" class="empty">กำลังโหลด...</td></tr></tbody></table>
+  </div>
+</main>
+<script>
+const uid=location.pathname.split('/').pop();
+async function load(){
+  const r=await fetch('/api/profile/'+uid);const d=await r.json();
+  document.getElementById('pageTitle').textContent=d.name;
+  document.getElementById('memberName').textContent=d.name;
+  document.getElementById('memberSub').textContent='UID: '+d.uid;
+  document.getElementById('statGrid').innerHTML=[
+    {val:d.total_duration,lbl:'เวลารวมสัปดาห์นี้'},
+    {val:d.session_count,lbl:'Sessions ทั้งหมด'},
+    {val:d.peak_hour!==null?String(d.peak_hour).padStart(2,'0')+':00':'-',lbl:'ชั่วโมง Active สุด'},
+    {val:d.avg_duration||'-',lbl:'เฉลี่ยต่อ session'},
+  ].map(s=>'<div class="stat-box"><div class="val">'+s.val+'</div><div class="lbl">'+s.lbl+'</div></div>').join('');
+  const hc=d.hour_counts;const max=Math.max(...Object.values(hc).map(Number),1);
+  const chart=document.getElementById('heatChart');chart.innerHTML='';
+  for(let h=0;h<24;h++){const count=Number(hc[String(h)]||0);const pct=Math.round((count/max)*100);
+    const bar=document.createElement('div');bar.className='heatmap-bar';
+    bar.style.cssText='background:rgba(88,101,242,'+(0.15+(pct/100)*0.85).toFixed(2)+');height:'+Math.max(pct,2)+'%';
+    bar.title=String(h).padStart(2,'0')+':00 — '+count+' sessions';chart.appendChild(bar);}
+  const body=document.getElementById('sessBody');
+  if(!d.sessions.length){body.innerHTML='<tr><td colspan="4" class="empty">ยังไม่มีข้อมูล</td></tr>';return;}
+  body.innerHTML=d.sessions.map(s=>'<tr><td>'+s.channel+'</td><td style="color:var(--muted)">'+s.join+'</td><td style="color:var(--muted)">'+s.leave+'</td><td>'+s.duration+'</td></tr>').join('');
+}
+load();
+</script>
+</body></html>
