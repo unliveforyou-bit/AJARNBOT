@@ -1234,9 +1234,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
     </select>
   </div>
   <div class="config-grid">
-    <div class="config-item"><label>Voice Events</label><input type="text" id="ch_voice" placeholder="Channel ID"></div>
-    <div class="config-item"><label>มุขและ Trivia</label><input type="text" id="ch_content" placeholder="Channel ID"></div>
-    <div class="config-item"><label>Stats (!rank, สรุป)</label><input type="text" id="ch_stats" placeholder="Channel ID"></div>
+    <div class="config-item"><label>Voice Events</label>
+      <select id="ch_voice" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
+    </div>
+    <div class="config-item"><label>มุขและ Trivia</label>
+      <select id="ch_content" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
+    </div>
+    <div class="config-item"><label>Stats (!rank, สรุป)</label>
+      <select id="ch_stats" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
+    </div>
   </div>
   <div style="font-size:12px;color:var(--muted);margin-top:8px">💡 Server ที่ไม่ได้ตั้งค่าแยก จะใช้ค่า Global แทน</div>
   <div class="btn-row"><button class="btn btn-primary" onclick="saveChannels()">บันทึก</button></div>
@@ -1342,26 +1348,57 @@ function applyConfig(c){
   const st=document.getElementById('toggle_send_trivia');if(st)st.checked=c.send_trivia!==false;
   NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
   SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
-  const cv=document.getElementById('ch_voice');const cc=document.getElementById('ch_content');const cs=document.getElementById('ch_stats');
-  if(cv)cv.value=c.channel_voice||'';if(cc)cc.value=c.channel_content||'';if(cs)cs.value=c.channel_stats||'';
+  // channel dropdowns populated by loadChannelDropdowns()
 }
 let currentGuildId='';
 async function loadConfig(){const r=await fetch('/api/config');applyConfig(await r.json());}
+async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStats){
+  const ids=['ch_voice','ch_content','ch_stats'];
+  const saved=[String(savedVoice||''),String(savedContent||''),String(savedStats||'')];
+  if(!guildId){
+    ids.forEach((id,i)=>{
+      const sel=document.getElementById(id);
+      sel.innerHTML='<option value="">— ยังไม่เลือก (ใช้ Global) —</option>';
+    });
+    return;
+  }
+  try{
+    const r=await fetch('/api/channels?guild_id='+guildId);
+    const channels=await r.json();
+    const opts='<option value="">— ยังไม่เลือก —</option>'+channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+    ids.forEach((id,i)=>{
+      const sel=document.getElementById(id);
+      sel.innerHTML=opts;
+      if(saved[i])sel.value=saved[i];
+    });
+  }catch(e){
+    ids.forEach(id=>{
+      document.getElementById(id).innerHTML='<option value="">— โหลดไม่ได้ —</option>';
+    });
+  }
+}
 async function loadGuilds(){
   try{
     const r=await fetch('/api/guilds');const guilds=await r.json();
     const sel=document.getElementById('guildSelect');
     sel.innerHTML='<option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>'+guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+    if(currentGuildId){sel.value=currentGuildId;await onGuildChange();}
+    else{await loadGlobalChannels();}
   }catch(e){}
+}
+async function loadGlobalChannels(){
+  const r=await fetch('/api/config');const cfg=await r.json();
+  // For global, show all channels from first available guild
+  const guilds_r=await fetch('/api/guilds');const guilds=await guilds_r.json();
+  const gid=guilds.length?guilds[0].id:'';
+  await loadChannelDropdowns(gid,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
 }
 async function onGuildChange(){
   currentGuildId=document.getElementById('guildSelect').value;
-  if(!currentGuildId){loadConfig();return;}
+  if(!currentGuildId){await loadGlobalChannels();return;}
   const r=await fetch('/api/guild-config?guild_id='+currentGuildId);
   const cfg=await r.json();
-  document.getElementById('ch_voice').value=cfg.channel_voice||'';
-  document.getElementById('ch_content').value=cfg.channel_content||'';
-  document.getElementById('ch_stats').value=cfg.channel_stats||'';
+  await loadChannelDropdowns(currentGuildId,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
 }
 async function toggleConfig(key,val){
   const p={};p[key]=val;
@@ -1379,10 +1416,10 @@ async function saveSpam(){
   showToast('บันทึก Anti-spam แล้ว');
 }
 async function saveChannels(){
-  const p={channel_voice:document.getElementById('ch_voice').value.trim(),
-           channel_content:document.getElementById('ch_content').value.trim(),
-           channel_stats:document.getElementById('ch_stats').value.trim()};
-  if(Object.values(p).some(v=>v&&isNaN(v))){showToast('Channel ID ต้องเป็นตัวเลข',true);return;}
+  const p={channel_voice:document.getElementById('ch_voice').value,
+           channel_content:document.getElementById('ch_content').value,
+           channel_stats:document.getElementById('ch_stats').value};
+  // values from select are always valid IDs or empty
   if(currentGuildId){
     const sel=document.getElementById('guildSelect');
     const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
@@ -1559,10 +1596,29 @@ def api_stats_period(period):
 @flask_app.route('/api/guilds')
 @require_auth
 def api_guilds():
-    guilds = []
-    for g in client.guilds:
-        guilds.append({'id': str(g.id), 'name': g.name, 'member_count': g.member_count})
+    # If logged in via Discord, filter to guilds where user is admin
+    discord_guilds = flask_session.get('discord_guilds')
+    if discord_guilds:
+        admin_ids = {g['id'] for g in discord_guilds if (int(g.get('permissions', 0)) & 0x8) == 0x8 or g.get('owner')}
+        guilds = [{'id': str(g.id), 'name': g.name, 'member_count': g.member_count}
+                  for g in client.guilds if str(g.id) in admin_ids]
+    else:
+        guilds = [{'id': str(g.id), 'name': g.name, 'member_count': g.member_count}
+                  for g in client.guilds]
     return jsonify(guilds)
+
+@flask_app.route('/api/channels')
+@require_auth
+def api_channels():
+    guild_id = request.args.get('guild_id', '')
+    if not guild_id:
+        return jsonify([])
+    g = client.get_guild(int(guild_id))
+    if not g:
+        return jsonify([])
+    channels = [{'id': str(c.id), 'name': c.name}
+                for c in sorted(g.text_channels, key=lambda c: c.position)]
+    return jsonify(channels)
 
 @flask_app.route('/api/config', methods=['GET'])
 @require_auth
