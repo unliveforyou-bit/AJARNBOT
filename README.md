@@ -105,18 +105,23 @@ cd AJARNBOT
 
 > **วิธีหา Discord User ID:** Discord Settings → Advanced → เปิด Developer Mode → คลิกขวาที่ชื่อตัวเอง → Copy User ID
 
-### 4. เปิด Bot Intents
+### 4. เปิด Bot Intents + Public Bot
 
-ไปที่ Discord Developer Portal → Bot → เปิด:
+ไปที่ Discord Developer Portal → Bot:
+- ✅ **Public Bot** — เปิด (สำคัญ! ถ้าปิดอยู่ คนอื่นจะ invite bot ไม่ได้เลย)
 - ✅ Server Members Intent
 - ✅ Message Content Intent
 - ✅ Presence Intent
+
+> **หมายเหตุ:** ถ้า `Public Bot` ปิดอยู่ → เฉพาะเจ้าของ app เท่านั้นที่ invite bot ได้ คนอื่นจะเห็น error จาก Discord
 
 ### 5. เชิญ Bot เข้า Server
 
 ไปที่ OAuth2 → URL Generator:
 - Scopes: `bot`, `applications.commands`
-- Permissions: `Send Messages`, `Read Message History`, `Add Reactions`, `Connect`, `Speak`
+- Permissions: `Send Messages`, `Read Message History`, `Add Reactions`, `Connect`, `Speak`, `Manage Messages`
+
+หรือกด **Invite Bot** จากหน้า login ของ dashboard โดยตรง
 
 ---
 
@@ -296,6 +301,49 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.5.0 — Multi-tenant System + Heatmap/Contrib Graph Redesign
+> `17aa753` · Multi-tenant, data isolation, UX redesign
+
+**Multi-tenant (ผู้ใช้หลายคน)**
+- 🌐 **Discord OAuth2 login** สำหรับ guild admin ทุกคน (ไม่ใช่แค่ owner)
+- 🔀 **Guild switcher** ใน sidebar — เปลี่ยน server ได้ทันที
+- 🔒 **Per-guild data isolation** — ทุก API endpoint ตรวจ `guild_id` + `require_guild_access()`
+- 🧬 **`get_gc()` inheritance** — guild config → global fallback, `GUILD_ADMIN_KEYS` กำหนดสิทธิ์
+- 🛡️ **`_guild_id_or_error()`** helper — validate + enforce access ทุก endpoint
+- 👋 **Login page onboarding** — ขั้นตอน 3 ข้อ + ปุ่ม Invite Bot สำหรับผู้ใช้ใหม่
+- 📋 **`/api/my-guilds`** — ส่งคืนเฉพาะ guild ที่ user เป็น admin + bot อยู่
+
+**Heatmap Redesign**
+- ✨ **Summary bar** — แสดง Peak hour + badge รวม joins
+- 🎨 **Color gradient จริง** — navy → Discord blue → violet (ไม่ใช่แค่ opacity)
+- 🕐 **Hour labels** ทุก 3 ชม. ใต้แต่ละ bar + peak glow
+- 📏 บาร์สูงขึ้นเป็น 110px
+
+**Contribution Graph Redesign**
+- 👤 **Avatar circle** แสดง initial ตัวอักษรแรก (gradient)
+- 🏷️ **Stats badges** — joins (accent) + วันที่ active (muted)
+- 📅 **Month labels** + **DOW labels** (Mon/Wed/Fri) แบบ GitHub
+- ⬛ **Cells ใหญ่ขึ้น** 13px, gap 3px — มองเห็นชัดกว่าเดิม
+
+**Security fixes (จาก code review)**
+- 🔒 CSRF state validation, SSRF OUTBOUND_WEBHOOK_URL check (`https://` only)
+- 🔢 Bounded `?days` param: `max(1, min(days, 3650))`
+- 🔄 `summary_sent` เปลี่ยนจาก `bool` → `dict` per-guild
+- 🧹 Eviction task สำหรับ `mute_cooldown`, `command_rate_limit`, `voice_spam_tracker`
+
+---
+
+### v2.4.0 — GitHub Contribution Graph + Discord Avatars
+> `0ff2b59` · Per-user daily activity, Discord CDN avatars
+
+- 📊 **GitHub-style contribution graph** per user — 53 สัปดาห์ย้อนหลัง (Sunday-based grid)
+- 🖼️ **Discord CDN avatars** ใน voice live list — แสดงรูป profile จริงแทน fallback initials
+- 💾 **Daily activity persistence** — `user_daily.json` เก็บข้อมูลข้ามวันไม่หาย restart
+- 📈 `/api/user-daily` endpoint — ดึงข้อมูลรายวันต่อ user + guild
+- 🗂️ **`guild_configs.json`** persist per-guild settings
+
+---
+
 ### v2.3.3 — Design system implementation (Phosphor icons + UX polish)
 > Full design system applied — no more emoji as icons, proper touch targets, loading states
 
@@ -402,7 +450,10 @@ tzdata>=2024.1
 | OAuth callback 403 Forbidden | `urllib.request` ไม่ส่ง `User-Agent` → Discord block | ✅ แก้แล้ว |
 | OAuth เด้งกลับ login | State mismatch เพราะ SameSite cookie / session loss | ✅ แก้แล้ว (SESSION_COOKIE_SAMESITE=Lax) |
 | Race condition JSON corrupt | หลาย thread เขียนไฟล์พร้อมกัน | ✅ แก้แล้ว (threading.Lock) |
-| OAuth DISCORD_CLIENT_SECRET | ยังไม่ได้ verify ว่าตรงกับ Developer Portal | 🔄 ตรวจสอบ |
+| คนอื่น invite bot ไม่ได้ | **Public Bot** ปิดอยู่ใน Developer Portal | ✅ เปิด Public Bot toggle ใน Developer Portal → Bot |
+| weekly_stats clear ทุก guild | `weekly_stats.clear()` ลบข้อมูลทุก guild แทน guild เดียว | ✅ แก้แล้ว (v2.5.0) |
+| CSRF state check bypass | OAuth state ไม่ validate ครบ | ✅ แก้แล้ว (v2.5.0) |
+| Dashboard แสดงข้อมูล server อื่น | ขาด `guild_id` filter ใน API endpoints | ✅ แก้แล้ว (v2.5.0) |
 
 ---
 
