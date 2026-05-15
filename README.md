@@ -296,6 +296,14 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.0.2 — Trivia/Joke Message Cleanup + Emoji Strip
+> `auto` · Auto-delete bot messages, strip emoji from trivia
+
+- 🗑️ **Auto-delete joke messages** — setup line + punchline ถูกลบอัตโนมัติหลัง 30 วินาที
+- 🗑️ **Auto-delete trivia messages** — คำถาม + เฉลย (หรือ reply ถูกต้อง) ถูกลบหลัง 30 วินาที
+- 🧹 **Strip emoji จาก trivia** — `load_trivia()` กรอง emoji ออกจากคำถาม/คำตอบก่อนส่ง (บอทอ่านตัว emoji ใน answer ไม่ได้)
+- 🔐 **เพิ่ม MANAGE_MESSAGES permission** ใน invite URL (จำเป็นสำหรับลบข้อความ)
+
 ### v2.0.0 — Public Multi-guild & App Version
 > `278a662` · Invite link, Guild switcher, Forced guild selection, Version footer
 

@@ -3,13 +3,13 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '2.0.0'
+APP_VERSION = '2.0.2'
 APP_BUILD_DATE = '2026-05-15'
 import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
 from discord import app_commands
-import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse
+import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse, re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session, render_template
@@ -140,10 +140,36 @@ def load_jokes(include_filtered=False):
                         jokes.append((current_cat, line))
     return jokes if jokes else [('มุขทั่วไป', j) for j in JOKES_FALLBACK]
 
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F600-\U0001F64F"
+    "\U0001F300-\U0001F5FF"
+    "\U0001F680-\U0001F6FF"
+    "\U0001F1E0-\U0001F1FF"
+    "\U00002500-\U00002BFF"
+    "\U0001F900-\U0001F9FF"
+    "\U0001FA00-\U0001FAFF"
+    "\U00002702-\U000027B0"
+    "\U000024C2-\U0001F251"
+    "]+", flags=re.UNICODE
+)
+def strip_emoji(text: str) -> str:
+    return _EMOJI_RE.sub('', text).strip()
+
 def load_trivia():
     if os.path.exists(TRIVIA_FILE):
+        items = []
         with open(TRIVIA_FILE, encoding='utf-8') as f:
-            return [l.strip() for l in f if '|' in l and not l.startswith('#')]
+            for line in f:
+                line = line.strip()
+                if '|' not in line or line.startswith('#'):
+                    continue
+                q, a = line.split('|', 1)
+                q = strip_emoji(q).strip()
+                a = strip_emoji(a).strip()
+                if q and a:
+                    items.append(f'{q}|{a}')
+        return items
     return []
 # ==========================
 
@@ -379,19 +405,29 @@ async def send_joke_with_vote(channel, category, joke):
         log(f'send_joke_with_vote: skipped — joke already in progress in channel {channel.id}')
         return
     active_joke_channels.add(channel.id)
+    sent_msgs = []
     try:
         if '?' in joke:
             parts = joke.split('?', 1)
-            await channel.send(f'[{category}] {parts[0].strip()}?')
+            setup_msg = await channel.send(f'[{category}] {parts[0].strip()}?')
+            sent_msgs.append(setup_msg)
             await asyncio.sleep(bot_config['joke_delay'])
             msg = await channel.send(parts[1].strip())
         else:
             msg = await channel.send(f'[{category}] {joke}')
+        sent_msgs.append(msg)
         await msg.add_reaction('👍')
         await msg.add_reaction('👎')
         register_joke_msg(msg.id, joke)
     finally:
         active_joke_channels.discard(channel.id)
+    # ลบข้อความทั้งหมดหลัง 30 วินาที
+    await asyncio.sleep(30)
+    for m in sent_msgs:
+        try:
+            await m.delete()
+        except Exception:
+            pass
 
 async def send_leaderboard(channel, combined=None, guild_id=None):
     if combined is None:
@@ -444,12 +480,24 @@ async def _post_trivia(channel, trivia_list=None):
     question = question.strip()
     answer = answer.strip()
     expires = datetime.now(THAI_TZ) + timedelta(seconds=TRIVIA_ANSWER_WINDOW)
-    active_trivia[channel.id] = {'answer': answer.lower(), 'question': question, 'expires': expires.isoformat()}
-    await channel.send(f'🤔 **คำถาม:** {question}\n_(ตอบภายใน {TRIVIA_ANSWER_WINDOW} วินาที)_')
+    q_msg = await channel.send(f'🤔 **คำถาม:** {question}\n_(ตอบภายใน {TRIVIA_ANSWER_WINDOW} วินาที)_')
+    active_trivia[channel.id] = {
+        'answer': answer.lower(), 'question': question,
+        'expires': expires.isoformat(), 'q_msg_id': q_msg.id,
+    }
     await asyncio.sleep(TRIVIA_ANSWER_WINDOW)
+    a_msg = None
     if channel.id in active_trivia:
         active_trivia.pop(channel.id, None)
-        await channel.send(f'✅ **เฉลย:** {answer}')
+        a_msg = await channel.send(f'✅ **เฉลย:** {answer}')
+    # ลบข้อความทั้งหมดหลัง 30 วินาที
+    await asyncio.sleep(30)
+    for m in [q_msg, a_msg]:
+        if m:
+            try:
+                await m.delete()
+            except Exception:
+                pass
 
 @tasks.loop(minutes=30)
 async def send_content():
@@ -662,6 +710,7 @@ async def on_message(message):
             user_ans = message.content.strip().lower()
             correct_ans = trivia_data['answer']
             if user_ans == correct_ans or correct_ans in user_ans:
+                q_msg_id = trivia_data.get('q_msg_id')
                 active_trivia.pop(message.channel.id, None)
                 gid = str(message.guild.id) if message.guild else 'dm'
                 uid = str(message.author.id)
@@ -672,7 +721,19 @@ async def on_message(message):
                 trivia_scores[gid][uid]['score'] += 1
                 trivia_scores[gid][uid]['name'] = message.author.display_name
                 save_trivia_scores()
-                await message.reply(f'🎉 ถูกต้อง! +1 คะแนน (รวม {trivia_scores[gid][uid]["score"]} คะแนน)')
+                reply_msg = await message.reply(f'🎉 ถูกต้อง! +1 คะแนน (รวม {trivia_scores[gid][uid]["score"]} คะแนน)')
+                # ลบข้อความคำถาม + reply หลัง 30 วินาที
+                async def _cleanup_trivia(r=reply_msg, qid=q_msg_id, ch=message.channel):
+                    await asyncio.sleep(30)
+                    for del_target in [r]:
+                        try: await del_target.delete()
+                        except Exception: pass
+                    if qid:
+                        try:
+                            q = await ch.fetch_message(qid)
+                            await q.delete()
+                        except Exception: pass
+                asyncio.create_task(_cleanup_trivia())
 
     if message.content.strip().lower().startswith('!rank'):
         parts = message.content.strip().lower().split()
@@ -975,8 +1036,9 @@ def bot_invite():
     """Redirect to Discord bot invite URL"""
     if not DISCORD_CLIENT_ID:
         return 'DISCORD_CLIENT_ID ยังไม่ได้ตั้งค่า', 503
-    # Permissions: VIEW_CHANNEL + SEND_MESSAGES + READ_MESSAGE_HISTORY + ADD_REACTIONS + USE_APPLICATION_COMMANDS
-    perms = 1024 + 2048 + 65536 + 64 + 2147483648
+    # Permissions: VIEW_CHANNEL + SEND_MESSAGES + MANAGE_MESSAGES + READ_MESSAGE_HISTORY + ADD_REACTIONS + USE_APPLICATION_COMMANDS
+    # MANAGE_MESSAGES (8192) required for deleting bot's own messages after trivia/joke
+    perms = 1024 + 2048 + 8192 + 65536 + 64 + 2147483648
     url = (f'https://discord.com/oauth2/authorize'
            f'?client_id={DISCORD_CLIENT_ID}'
            f'&scope=bot+applications.commands'
