@@ -13,6 +13,16 @@ from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session
 from functools import wraps
 
+# ===== Thread-safety Locks =====
+_lock_stats   = threading.Lock()
+_lock_history = threading.Lock()
+_lock_votes   = threading.Lock()
+_lock_config  = threading.Lock()
+_lock_guild   = threading.Lock()
+_lock_hourly  = threading.Lock()
+_lock_log     = threading.Lock()
+# ================================
+
 THAI_TZ = ZoneInfo('Asia/Bangkok')
 
 # ===== Environment Variables =====
@@ -25,6 +35,13 @@ DASHBOARD_API_KEY    = os.environ.get('DASHBOARD_API_KEY', '')     # optional AP
 DISCORD_CLIENT_ID    = os.environ.get('DISCORD_CLIENT_ID', '')     # Discord OAuth app client ID
 DISCORD_CLIENT_SECRET = os.environ.get('DISCORD_CLIENT_SECRET', '')  # Discord OAuth app client secret
 DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')  # e.g. https://ajarnbot.up.railway.app/callback
+
+# ===== Startup config validation =====
+_FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
+if not _FLASK_SECRET_RAW:
+    print('⚠️  WARNING: FLASK_SECRET not set — sessions will be invalidated on every restart!')
+    print('⚠️  Set FLASK_SECRET env var in Railway to a fixed hex string (e.g. openssl rand -hex 32)')
+# =====================================
 # =================================
 
 # ===== Paths =====
@@ -77,8 +94,9 @@ def load_config():
             bot_config.update(json.load(f))
 
 def save_config():
-    with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-        json.dump(bot_config, f, ensure_ascii=False, indent=2)
+    with _lock_config:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(bot_config, f, ensure_ascii=False, indent=2)
 # ==================
 
 # ===== Per-guild Config =====
@@ -91,8 +109,9 @@ def load_guild_configs():
             guild_configs = json.load(f)
 
 def save_guild_configs():
-    with open(GUILD_CONFIGS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(guild_configs, f, ensure_ascii=False, indent=2)
+    with _lock_guild:
+        with open(GUILD_CONFIGS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(guild_configs, f, ensure_ascii=False, indent=2)
 # ============================
 
 # ===== Jokes / Trivia =====
@@ -136,8 +155,9 @@ def load_stats():
             weekly_stats = json.load(f)
 
 def save_stats():
-    with open(STATS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(weekly_stats, f, ensure_ascii=False, indent=2)
+    with _lock_stats:
+        with open(STATS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(weekly_stats, f, ensure_ascii=False, indent=2)
 
 def format_duration(seconds):
     d = seconds // 86400
@@ -160,8 +180,9 @@ def load_hourly():
             hourly_activity = json.load(f)
 
 def save_hourly():
-    with open(HOURLY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(hourly_activity, f)
+    with _lock_hourly:
+        with open(HOURLY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(hourly_activity, f)
 # =================================
 
 # ===== Session History =====
@@ -174,8 +195,9 @@ def load_history():
             session_history = json.load(f)
 
 def save_history():
-    with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(session_history[-MAX_HISTORY:], f, ensure_ascii=False, indent=2)
+    with _lock_history:
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(session_history[-MAX_HISTORY:], f, ensure_ascii=False, indent=2)
 # ===========================
 
 # ===== Joke Votes =====
@@ -189,8 +211,9 @@ def load_votes():
             joke_votes = json.load(f)
 
 def save_votes():
-    with open(VOTES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(joke_votes, f, ensure_ascii=False, indent=2)
+    with _lock_votes:
+        with open(VOTES_FILE, 'w', encoding='utf-8') as f:
+            json.dump(joke_votes, f, ensure_ascii=False, indent=2)
 
 def register_joke_msg(msg_id, joke_text):
     active_joke_msgs[msg_id] = joke_text
@@ -316,12 +339,13 @@ event_counts = {'join': 0, 'leave': 0, 'mute': 0, 'deaf': 0, 'stream': 0, 'video
 # ===== Logging =====
 def log(msg):
     line = f'[{datetime.now(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")}] {msg}\n'
-    print(line, end='')   # Railway logs → stdout
-    try:
-        with open(LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(line)
-    except Exception:
-        pass
+    with _lock_log:
+        print(line, end='')   # Railway logs → stdout
+        try:
+            with open(LOG_FILE, 'a', encoding='utf-8') as f:
+                f.write(line)
+        except Exception as e:
+            print(f'[LOG ERROR] {e}', flush=True)
 # ===================
 
 # ===== Time-range stats helper =====
@@ -334,7 +358,8 @@ def get_stats_for_period(period='week', guild_id=None):
             continue
         try:
             join_dt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
-        except Exception:
+        except Exception as e:
+            log(f'get_stats_for_period: bad join format {s.get("join")!r}: {e}')
             continue
         if period == 'today' and join_dt.date() != now.date():
             continue
@@ -756,7 +781,7 @@ async def on_voice_state_update(member, before, after):
 
 # ===== Flask Dashboard =====
 flask_app = Flask(__name__)
-flask_app.secret_key = os.environ.get('FLASK_SECRET', secrets.token_hex(32))
+flask_app.secret_key = _FLASK_SECRET_RAW or secrets.token_hex(32)
 flask_app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 flask_app.config['SESSION_COOKIE_SECURE'] = True
 flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
@@ -1714,8 +1739,8 @@ def api_profile(uid):
         try:
             h = str(int(s['join'].split(' ')[1].split(':')[0]))
             hour_counts[h] = hour_counts.get(h, 0) + 1
-        except Exception:
-            pass
+        except Exception as e:
+            log(f'profile hour_counts: bad join format: {e}')
     peak_hour = max(hour_counts, key=hour_counts.get) if hour_counts else None
     avg_sec   = (sum(s['seconds'] for s in sessions) // len(sessions)) if sessions else 0
     return jsonify({'uid': uid, 'name': name, 'total_seconds': seconds,
