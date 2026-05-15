@@ -150,11 +150,11 @@ async function switchGuild(guildId){
   try{
     await fetch('/api/set-guild',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:guildId})});
     currentGuildId=guildId;
-    // sync config-area dropdown
+    // sync config-area dropdown + reload config/channels for new guild
     const sel=document.getElementById('guildSelect');
     if(sel){sel.value=guildId;await onGuildChange();}
     // reload all data panels
-    refreshStatus();loadHeatmap();loadHistory();
+    refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -170,6 +170,7 @@ async function onGuildChange(){
   if(!currentGuildId){await loadGlobalChannels();return;}
   const r=await fetch('/api/guild-config?guild_id='+currentGuildId);
   const cfg=await r.json();
+  applyConfig(cfg);  // update toggles + number inputs for this guild
   await loadChannelDropdowns(currentGuildId,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
 }
 function configEndpoint(extraBody={}){
@@ -320,9 +321,17 @@ async function loadHeatmap(){
   if(total){
     summary.innerHTML=`<span style="display:flex;align-items:center;gap:5px"><i class="ph-bold ph-lightning" style="color:var(--accent)"></i>Peak <strong>${String(peakH).padStart(2,'0')}:00</strong>&nbsp;·&nbsp;${values[peakH]} joins</span><span class="hm-total">${total.toLocaleString()} joins รวม</span>`;
   } else {
-    summary.innerHTML='<span>ยังไม่มีข้อมูล Heatmap</span>';
+    summary.innerHTML='<span style="color:var(--muted)">ยังไม่มีข้อมูล — จะแสดงเมื่อมีคนเข้าห้อง Voice</span>';
   }
   chart.appendChild(summary);
+
+  // Chart area = Y-axis label + bars
+  const chartRow=document.createElement('div');chartRow.className='heatmap-chart-row';
+
+  // Y-axis label
+  const yAxis=document.createElement('div');yAxis.className='heatmap-yaxis';
+  yAxis.innerHTML='<span>จำนวน joins</span>';
+  chartRow.appendChild(yAxis);
 
   // Bar columns
   const barsWrap=document.createElement('div');barsWrap.className='heatmap-bars';
@@ -338,12 +347,13 @@ async function loadHeatmap(){
     bar.title=hLabel;bar.setAttribute('role','img');bar.setAttribute('aria-label',hLabel);bar.setAttribute('tabindex','0');
     barArea.appendChild(bar);
     const lbl=document.createElement('div');lbl.className='heatmap-hour-label';
-    lbl.textContent=(h%3===0)?String(h).padStart(2,'0'):'';
+    lbl.textContent=String(h).padStart(2,'0');  // show every hour
     col.appendChild(barArea);col.appendChild(lbl);
     barsWrap.appendChild(col);
     animated.push({el:bar,scale:Math.max(pct,0.02)});
   }
-  chart.appendChild(barsWrap);
+  chartRow.appendChild(barsWrap);
+  chart.appendChild(chartRow);
   requestAnimationFrame(()=>{animated.forEach(({el,scale})=>{el.style.transform='scaleY('+scale+')';});});
 }
 async function loadContribGraph(){
