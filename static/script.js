@@ -273,16 +273,20 @@ async function loadHeatmap(){
   }
   const max=Math.max(...Object.values(flat).map(Number),1);
   const chart=document.getElementById('heatmapChart');chart.innerHTML='';
+  const bars=[];
   for(let h=0;h<24;h++){
     const count=Number(flat[String(h)]||0);const pct=Math.round((count/max)*100);
     const bar=document.createElement('div');bar.className='heatmap-bar';
-    bar.style.cssText='background:rgba(88,101,242,'+(0.15+(pct/100)*0.85).toFixed(2)+');height:'+Math.max(pct,2)+'%';
+    bar.style.background='rgba(88,101,242,'+(0.15+(pct/100)*0.85).toFixed(2)+')';
     const hLabel=String(h).padStart(2,'0')+':00 — '+count+' joins';
     bar.title=hLabel;
-    // #15 — heatmap bars: role+aria-label for screen readers
     bar.setAttribute('role','img');bar.setAttribute('aria-label',hLabel);
     bar.setAttribute('tabindex','0');
-    chart.appendChild(bar);}
+    chart.appendChild(bar);
+    bars.push({el:bar,scale:Math.max(pct,2)/100});
+  }
+  // rAF ensures initial scaleY(0.02) from CSS renders first → transition fires
+  requestAnimationFrame(()=>{bars.forEach(({el,scale})=>{el.style.transform='scaleY('+scale+')';});});
 }
 async function loadHistory(){
   const gp=currentGuildId?'?guild_id='+currentGuildId:'';
@@ -312,13 +316,18 @@ async function resetVotes(){
   showToast('รีเซ็ตแล้ว');loadVotes();
 }
 function toggleTheme(){
-  const light=document.body.classList.toggle('light');
-  localStorage.setItem('theme',light?'light':'dark');
-  const btn=document.getElementById('themeBtn');
-  btn.innerHTML=light
-    ?'<i class="ph-bold ph-sun" aria-hidden="true"></i>'
-    :'<i class="ph-bold ph-moon" aria-hidden="true"></i>';
-  btn.setAttribute('aria-label',light?'สลับเป็นธีมมืด':'สลับเป็นธีมสว่าง');
+  // suppress all transitions during theme switch to avoid color flash
+  document.documentElement.setAttribute('data-theme-switching','');
+  requestAnimationFrame(()=>{
+    const light=document.body.classList.toggle('light');
+    localStorage.setItem('theme',light?'light':'dark');
+    const btn=document.getElementById('themeBtn');
+    btn.innerHTML=light
+      ?'<i class="ph-bold ph-sun" aria-hidden="true"></i>'
+      :'<i class="ph-bold ph-moon" aria-hidden="true"></i>';
+    btn.setAttribute('aria-label',light?'สลับเป็นธีมมืด':'สลับเป็นธีมสว่าง');
+    requestAnimationFrame(()=>{document.documentElement.removeAttribute('data-theme-switching');});
+  });
 }
 async function loadLogs(){
   try{
