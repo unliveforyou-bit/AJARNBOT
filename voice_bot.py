@@ -1848,9 +1848,10 @@ def run_flask():
     logging.getLogger('werkzeug').setLevel(logging.ERROR)
     flask_app.run(host='0.0.0.0', port=DASHBOARD_PORT, debug=False, use_reloader=False)
 
-log(f'Starting VoiceLog Bot on port {DASHBOARD_PORT}...')
-bot_thread   = threading.Thread(target=run_discord, daemon=True)
-flask_thread = threading.Thread(target=run_flask,   daemon=True)
-bot_thread.start()
-flask_thread.start()
-threading.Event().wait()   # block main thread — ไม่มี pystray แล้ว
+if __name__ == '__main__':
+    log(f'Starting VoiceLog Bot on port {DASHBOARD_PORT}...')
+    bot_thread   = threading.Thread(target=run_discord, daemon=True)
+    flask_thread = threading.Thread(target=run_flask,   daemon=True)
+    bot_thread.start()
+    flask_thread.start()
+    threading.Event().wait()   # block main thread — ไม่มี pystray แล้ว
