@@ -706,19 +706,19 @@ client   = VoiceBot()
 bot_loop = None
 
 def get_guild_ch(guild_id, ch_type):
-    """Get channel for a specific guild.
-    Per-guild config first; global fallback only when guild_id is absent (single-guild/owner mode).
+    """Get channel for a specific guild — 3-tier fallback:
+    1. Per-guild config (guild_configs[gid][channel_X])
+    2. Global default (bot_config[channel_X]) — only if channel is in same guild
+    3. First writable text channel in the guild (automatic fallback)
     Always validates the returned channel belongs to the requested guild.
     """
     gid = str(guild_id) if guild_id else ''
-    # Per-guild config takes priority
+    # Tier 1: Per-guild config
     cid = guild_configs.get(gid, {}).get(f'channel_{ch_type}')
-    # Global fallback only when no guild specified (prevents cross-guild channel leakage)
+    # Tier 2: Global fallback — allowed only when channel belongs to same guild
     if cid is None:
         if not guild_id:
             cid = bot_config.get(f'channel_{ch_type}')
-        # If guild IS specified but has no per-guild channel set, use global ONLY if
-        # it resolves to a channel within the same guild (safe fallback)
         else:
             global_cid = bot_config.get(f'channel_{ch_type}')
             if global_cid:
@@ -728,17 +728,28 @@ def get_guild_ch(guild_id, ch_type):
                         cid = global_cid
                 except (ValueError, TypeError):
                     pass
-    if not cid:
-        return None
-    try:
-        ch = client.get_channel(int(cid))
-    except (ValueError, TypeError):
-        return None
-    # Final safety: verify channel belongs to the correct guild
-    if ch and guild_id and hasattr(ch, 'guild') and str(ch.guild.id) != gid:
-        log(f'get_guild_ch: channel {cid} is in guild {ch.guild.id}, not {gid} — skipping cross-guild send')
-        return None
-    return ch
+    if cid:
+        try:
+            ch = client.get_channel(int(cid))
+        except (ValueError, TypeError):
+            ch = None
+        if ch and guild_id and hasattr(ch, 'guild') and str(ch.guild.id) != gid:
+            log(f'get_guild_ch: channel {cid} is in guild {ch.guild.id}, not {gid} — skipping')
+            ch = None
+        if ch:
+            return ch
+    # Tier 3: Auto-detect — first writable text channel in the guild
+    if guild_id and client.is_ready():
+        try:
+            guild = client.get_guild(int(guild_id))
+            if guild and guild.me:
+                for ch in guild.text_channels:
+                    if ch.permissions_for(guild.me).send_messages:
+                        log(f'get_guild_ch: no channel_{ch_type} configured for guild {gid} — using #{ch.name} as fallback')
+                        return ch
+        except (ValueError, TypeError):
+            pass
+    return None
 
 async def send_joke_with_vote(channel, category, joke):
     # ป้องกันส่ง joke ซ้อนกันใน channel เดียวกัน
