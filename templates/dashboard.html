@@ -27,6 +27,7 @@
       <li><a href="#ct-heatmap-section"><i class="ph-bold ph-fire" aria-hidden="true"></i> Heatmap</a></li>
       <li><a href="#ct-contrib-section"><i class="ph-bold ph-calendar-dots" aria-hidden="true"></i> Contribution</a></li>
       <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
+      <li><a href="#ct-dow-section"><i class="ph-bold ph-grid-four" aria-hidden="true"></i> Pattern 7×24</a></li>
       <li><a href="#ct-voice-section"><i class="ph-bold ph-microphone-stage" aria-hidden="true"></i> Voice Live</a></li>
     </ul>
   </div>
@@ -47,6 +48,7 @@
       <li><a href="#ct-stats-section"><i class="ph-bold ph-trophy" aria-hidden="true"></i> สถิติ</a></li>
       <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
       <li><a href="#ct-inactive-section"><i class="ph-bold ph-user-minus" aria-hidden="true"></i> Inactive Users</a></li>
+      <li><a href="#ct-histogram-section"><i class="ph-bold ph-chart-bar-horizontal" aria-hidden="true"></i> Session Length</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
       <li><a href="#ct-channel-section"><i class="ph-bold ph-speaker-high" aria-hidden="true"></i> Channel Activity</a></li>
       <li><a href="#ct-history-section"><i class="ph-bold ph-clipboard-text" aria-hidden="true"></i> Session History</a></li>
@@ -105,6 +107,26 @@
 
   <!-- Main Content -->
   <main>
+
+    <!-- KPI Summary Bar -->
+    <div class="kpi-bar" role="region" aria-label="ตัวเลขสรุป">
+      <div class="kpi-cell">
+        <div class="kpi-val" id="kpiDauToday">-</div>
+        <div class="kpi-lbl">DAU วันนี้</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-val" id="kpiOnlineNow" aria-live="polite">-</div>
+        <div class="kpi-lbl">ออนไลน์ตอนนี้</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-val" id="kpiAvgSession">-</div>
+        <div class="kpi-lbl">เฉลี่ย/session</div>
+      </div>
+      <div class="kpi-cell">
+        <div class="kpi-val" id="kpiWeekSessions">-</div>
+        <div class="kpi-lbl">Sessions สัปดาห์นี้</div>
+      </div>
+    </div>
 
     <!-- 1. สถานะ Bot -->
     <section class="card" id="ct-status-section" aria-labelledby="ct-status">
@@ -286,11 +308,24 @@
         <div class="dau-legend">
           <span class="dau-legend-dot dau" style="height:2px;width:16px"></span> DAU (unique users)
           <span class="dau-legend-dot joins" style="height:1.5px;width:16px;border-top:1.5px dashed var(--muted)"></span> Joins
+          <span class="dau-legend-dot avg7" style="height:1.5px;width:16px;border-top:1.5px dotted var(--green)"></span> 7d avg
         </div>
         <div style="margin-top:16px">
           <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600">Retention week-over-week</div>
           <div class="retention-wrap" id="retentionWrap"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
         </div>
+      </div>
+    </section>
+
+    <!-- 6d. Day-of-Week × Hour Heatmap (7×24) -->
+    <section class="card" id="ct-dow-section" aria-labelledby="ct-dow">
+      <div class="card-header">
+        <div class="card-icon purple" aria-hidden="true"><i class="ph-bold ph-grid-four"></i></div>
+        <h2 class="card-title" id="ct-dow">Active Pattern — วัน × ชั่วโมง</h2>
+        <span style="font-size:11px;color:var(--muted);flex-shrink:0">7 วัน × 24 ชม.</span>
+      </div>
+      <div class="card-body">
+        <div class="dow-wrap" id="dowWrap"><span class="empty-msg">กำลังโหลด...</span></div>
       </div>
     </section>
 
@@ -309,12 +344,18 @@
         <div class="card-header">
           <div class="card-icon yellow" aria-hidden="true"><i class="ph-bold ph-trophy"></i></div>
           <h2 class="card-title" id="ct-stats">Leaderboard</h2>
-          <div class="period-btns" role="group" aria-label="เลือกช่วงเวลา">
+          <div class="period-btns" role="group" aria-label="เลือกช่วงเวลา" style="margin-left:auto">
             <button class="period-btn active" onclick="loadLeaderboard('7d',this)" aria-pressed="true">7d</button>
             <button class="period-btn" onclick="loadLeaderboard('30d',this)" aria-pressed="false">30d</button>
             <button class="period-btn" onclick="loadLeaderboard('90d',this)" aria-pressed="false">90d</button>
             <button class="period-btn" onclick="loadLeaderboard('alltime',this)" aria-pressed="false">All</button>
           </div>
+        </div>
+        <div style="padding:0 16px 8px;display:flex;gap:4px" role="group" aria-label="เรียงตาม">
+          <button class="sort-btn active" onclick="setLbSort('time',this)" aria-pressed="true" title="เรียงตามเวลา"><i class="ph-bold ph-clock" aria-hidden="true"></i> เวลา</button>
+          <button class="sort-btn" onclick="setLbSort('sessions',this)" aria-pressed="false" title="เรียงตาม Sessions"><i class="ph-bold ph-stack" aria-hidden="true"></i> Sessions</button>
+          <button class="sort-btn" onclick="setLbSort('streak',this)" aria-pressed="false" title="เรียงตาม Streak"><i class="ph-bold ph-fire" aria-hidden="true"></i> Streak</button>
+          <button class="sort-btn" onclick="setLbSort('days',this)" aria-pressed="false" title="เรียงตามวันที่ active"><i class="ph-bold ph-calendar-check" aria-hidden="true"></i> วัน</button>
         </div>
         <div class="card-body">
           <div class="stat-list" id="statsList"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
@@ -330,6 +371,17 @@
       </div>
       <div class="card-body">
         <div id="inactiveList"><span class="empty-msg">กำลังโหลด...</span></div>
+      </div>
+    </section>
+
+    <!-- Session length histogram -->
+    <section class="card" id="ct-histogram-section" aria-labelledby="ct-histogram">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-chart-bar-horizontal"></i></div>
+        <h2 class="card-title" id="ct-histogram">Session Length Distribution</h2>
+      </div>
+      <div class="card-body">
+        <div id="histogramWrap"><span class="empty-msg">กำลังโหลด...</span></div>
       </div>
     </section>
 
@@ -374,10 +426,16 @@
     <section class="card" id="ct-history-section" aria-labelledby="ct-history">
       <div class="card-header">
         <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-clipboard-text"></i></div>
-        <h2 class="card-title" id="ct-history">Session History — ล่าสุด 50 รายการ</h2>
+        <h2 class="card-title" id="ct-history">Session History — ล่าสุด 200 รายการ</h2>
         <a id="csvExportBtn" href="#" onclick="exportCSV();return false;" class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" aria-label="Export CSV">
           <i class="ph-bold ph-download-simple" aria-hidden="true"></i> Export CSV
         </a>
+      </div>
+      <div style="padding:8px 16px 0">
+        <div class="history-search-wrap">
+          <i class="ph-bold ph-magnifying-glass history-search-icon" aria-hidden="true"></i>
+          <input type="search" id="historySearch" class="history-search" placeholder="ค้นหาชื่อ หรือ channel..." aria-label="ค้นหา Session" oninput="filterHistory(this.value)">
+        </div>
       </div>
       <div class="card-body" style="padding:0">
         <div class="history-wrap">

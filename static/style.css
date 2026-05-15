@@ -808,3 +808,68 @@ body.light .period-btn.active { color:#fff; }
 .profile-ch-track { flex:1; height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
 .profile-ch-fill { height:100%; background:var(--accent); border-radius:3px; }
 .profile-ch-time { font-size:11px; color:var(--muted); min-width:50px; text-align:right; flex-shrink:0; }
+
+/* ── KPI Summary Bar ── */
+.kpi-bar {
+  display:grid; grid-template-columns:repeat(4,1fr); gap:10px;
+  margin-bottom:0; /* cards below handle spacing */
+}
+.kpi-cell {
+  background:var(--card-bg); border:1px solid var(--border); border-radius:var(--radius);
+  padding:14px 16px; display:flex; flex-direction:column; align-items:flex-start; gap:4px;
+  border-left:3px solid var(--accent);
+}
+.kpi-val {
+  font-size:22px; font-weight:800; color:var(--accent);
+  font-variant-numeric:tabular-nums; line-height:1;
+}
+.kpi-lbl { font-size:11px; color:var(--muted); font-weight:500; letter-spacing:.4px; }
+@media(max-width:600px){.kpi-bar{grid-template-columns:repeat(2,1fr);}}
+
+/* ── Sort tabs (leaderboard) ── */
+.sort-btn {
+  background:transparent; border:1px solid var(--border); color:var(--muted);
+  border-radius:var(--radius-sm); padding:3px 9px; font-size:11px; cursor:pointer;
+  display:inline-flex; align-items:center; gap:4px;
+  transition:background 0.15s, color 0.15s, border-color 0.15s;
+}
+.sort-btn:hover { border-color:var(--accent); color:var(--accent); }
+.sort-btn.active { background:rgba(88,101,242,.15); border-color:var(--accent); color:var(--accent); font-weight:700; }
+body.light .sort-btn { border-color:var(--border); color:var(--muted); }
+body.light .sort-btn.active { background:rgba(88,101,242,.12); }
+
+/* ── 7×24 DOW Heatmap ── */
+.dow-wrap { overflow-x:auto; }
+.dow-header { display:flex; align-items:center; margin-bottom:2px; }
+.dow-hour-row { display:grid; grid-template-columns:repeat(24,1fr); flex:1; }
+.dow-hour-lbl { font-size:9px; color:var(--muted); text-align:left; }
+.dow-row { display:flex; align-items:center; gap:4px; margin-bottom:2px; }
+.dow-day-lbl { width:26px; font-size:10px; color:var(--muted); flex-shrink:0; text-align:right; padding-right:4px; }
+.dow-cells { display:grid; grid-template-columns:repeat(24,1fr); gap:2px; flex:1; min-width:240px; }
+.dow-cell { height:14px; border-radius:2px; cursor:default; transition:opacity .1s; }
+.dow-cell:hover { opacity:.75; outline:1px solid var(--accent); }
+
+/* ── DAU rolling avg line ── */
+.dau-line-avg { fill:none; stroke:var(--green); stroke-width:1.5; stroke-dasharray:3 2; stroke-linejoin:round; opacity:.8; }
+
+/* ── Session length histogram ── */
+.hist-row { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.hist-row:last-child { border-bottom:none; }
+.hist-lbl { width:54px; color:var(--muted); flex-shrink:0; font-size:11px; font-weight:600; }
+.hist-bar-bg { flex:1; height:8px; background:var(--border); border-radius:4px; overflow:hidden; }
+.hist-bar-fill { height:100%; background:var(--accent); border-radius:4px; transition:width .4s cubic-bezier(0.22,1,0.36,1); }
+.hist-count { min-width:70px; text-align:right; font-weight:600; font-variant-numeric:tabular-nums; flex-shrink:0; }
+
+/* ── History search ── */
+.history-search-wrap {
+  position:relative; display:flex; align-items:center;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:0 10px; gap:6px; margin-bottom:6px;
+}
+.history-search-icon { color:var(--muted); font-size:13px; flex-shrink:0; }
+.history-search {
+  flex:1; background:transparent; border:none; outline:none;
+  color:var(--text); font-size:13px; padding:7px 0; font-family:inherit;
+}
+.history-search::placeholder { color:var(--muted); }
+body.light .history-search-wrap { background:var(--surface); }

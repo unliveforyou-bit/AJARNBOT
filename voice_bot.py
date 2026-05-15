@@ -2208,6 +2208,7 @@ def api_leaderboard():
         return err
     gid    = str(guild_id)
     period = request.args.get('period', '7d')
+    sort   = request.args.get('sort', 'time')   # time | sessions | streak | days
     now    = datetime.now(THAI_TZ)
     if period == '7d':
         # fast path — use weekly_stats in-memory
@@ -2237,14 +2238,38 @@ def api_leaderboard():
     for (gid2, mid2), (dname, jt, _) in list(voice_join_times.items()):
         if str(gid2) != gid:
             continue
-        uid = str(mid2)
+        uid     = str(mid2)
         elapsed = int((now - jt).total_seconds())
         if uid not in combined:
             combined[uid] = {'name': dname, 'seconds': 0}
         combined[uid]['seconds'] += elapsed
-    ranked = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:10]
+    # Enrich from user_daily for alternative sort keys
+    gdata = user_daily.get(gid, {})
+    for uid, v in combined.items():
+        ud = gdata.get(uid, {})
+        v['session_count'] = ud.get('session_count', 0)
+        v['streak_max']    = ud.get('streak_max', 0)
+        v['active_days']   = len(ud.get('dates', {}))
+    # Sort by requested metric
+    if sort == 'sessions':
+        ranked = sorted(combined.items(), key=lambda x: x[1].get('session_count', 0), reverse=True)[:10]
+    elif sort == 'streak':
+        ranked = sorted(combined.items(), key=lambda x: x[1].get('streak_max', 0), reverse=True)[:10]
+    elif sort == 'days':
+        ranked = sorted(combined.items(), key=lambda x: x[1].get('active_days', 0), reverse=True)[:10]
+    else:  # time
+        ranked = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:10]
+
+    def _value_label(v):
+        if sort == 'sessions': return str(v.get('session_count', 0)) + ' sess'
+        if sort == 'streak':   return str(v.get('streak_max', 0)) + ' วัน'
+        if sort == 'days':     return str(v.get('active_days', 0)) + ' วัน'
+        return format_duration(v['seconds'])
+
     return jsonify([
-        {'uid': uid, 'name': v['name'], 'seconds': v['seconds'], 'duration': format_duration(v['seconds'])}
+        {'uid': uid, 'name': v['name'], 'seconds': v['seconds'], 'duration': _value_label(v),
+         'session_count': v.get('session_count', 0), 'streak_max': v.get('streak_max', 0),
+         'active_days': v.get('active_days', 0)}
         for uid, v in ranked
     ])
 
@@ -2325,6 +2350,79 @@ def api_retention():
             'retention_pct':  pct,
         })
     return jsonify(result)
+
+# ── WAU (Weekly Active Users) ─────────────────────────────────────────────────
+@flask_app.route('/api/wau-mau')
+@require_auth
+def api_wau_mau():
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        weeks = max(1, min(int(request.args.get('weeks', 12)), 52))
+    except ValueError:
+        return jsonify({'error': 'invalid weeks'}), 400
+    now   = datetime.now(THAI_TZ)
+    today = now.date()
+    # Monday of current week
+    current_monday = today - timedelta(days=today.weekday())
+    result = []
+    for w in range(weeks - 1, -1, -1):
+        week_start = current_monday - timedelta(weeks=w)
+        week_uids  = set()
+        for day_offset in range(7):
+            d_str = (week_start + timedelta(days=day_offset)).strftime('%Y-%m-%d')
+            uids  = daily_unique.get(gid, {}).get(d_str, [])
+            week_uids.update(uids)
+        result.append({
+            'week_start': week_start.strftime('%Y-%m-%d'),
+            'wau': len(week_uids),
+        })
+    return jsonify(result)
+
+# ── Day-of-Week × Hour Heatmap (7×24) ────────────────────────────────────────
+@flask_app.route('/api/dow-heatmap')
+@require_auth
+def api_dow_heatmap():
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid    = str(guild_id)
+    matrix = [[0] * 24 for _ in range(7)]
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    for s in hist:
+        try:
+            jt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            matrix[jt.weekday()][jt.hour] += 1
+        except Exception:
+            pass
+    return jsonify({
+        'matrix': matrix,
+        'days': ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'],
+    })
+
+# ── Session length histogram ──────────────────────────────────────────────────
+@flask_app.route('/api/histogram')
+@require_auth
+def api_histogram():
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid  = str(guild_id)
+    keys = ['0-5m', '5-15m', '15-30m', '30-60m', '60m+']
+    cnts = {k: 0 for k in keys}
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    for s in hist:
+        mins = (s.get('seconds', 0) or 0) / 60
+        if   mins <  5: cnts['0-5m']   += 1
+        elif mins < 15: cnts['5-15m']  += 1
+        elif mins < 30: cnts['15-30m'] += 1
+        elif mins < 60: cnts['30-60m'] += 1
+        else:           cnts['60m+']   += 1
+    return jsonify([{'range': k, 'count': cnts[k]} for k in keys])
 # ─────────────────────────────────────────────────────────────────────────────
 
 @flask_app.route('/api/trivia-scores')

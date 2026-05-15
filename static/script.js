@@ -161,6 +161,7 @@ async function switchGuild(guildId){
     // reload all data panels
     refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
+    loadDowHeatmap();loadHistogram();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -292,6 +293,9 @@ async function refreshStatus(){
     // avg session + total sessions
     const avgEl=document.getElementById('avgSess');if(avgEl)avgEl.textContent=d.avg_session_fmt||'—';
     const totEl=document.getElementById('totalSess');if(totEl)totEl.textContent=d.total_sessions!=null?d.total_sessions.toLocaleString():'—';
+    // KPI bar — online now + avg session
+    const ko=document.getElementById('kpiOnlineNow');if(ko)ko.textContent=d.voice_users?d.voice_users.length:0;
+    const ka=document.getElementById('kpiAvgSession');if(ka)ka.textContent=d.avg_session_fmt||'—';
   }catch(e){document.getElementById('statusLabel').textContent='กำลังเชื่อมต่อ...';}
 }
 async function loadHeatmap(){
@@ -452,17 +456,6 @@ async function loadContribGraph(){
     if(container)container.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';
   }
 }
-async function loadHistory(){
-  const gp=currentGuildId?'?guild_id='+currentGuildId:'';
-  let d;try{const r=await fetch('/api/history'+gp);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
-  if(!d)return;
-  const body=document.getElementById('historyBody');
-  if(!d.length){body.innerHTML='<tr><td colspan="5" style="color:var(--muted);padding:12px">ยังไม่มีข้อมูล</td></tr>';return;}
-  body.innerHTML=d.slice().reverse().slice(0,50).map(s=>
-    '<tr><td>'+escHTML(s.name)+'</td><td style="color:var(--muted)">'+escHTML(s.channel)+'</td>'
-    +'<td style="color:var(--muted)">'+escHTML(s.join)+'</td><td style="color:var(--muted)">'+escHTML(s.leave)+'</td>'
-    +'<td>'+escHTML(s.duration)+'</td></tr>').join('');
-}
 async function loadVotes(){
   let d;try{const r=await fetch('/api/votes');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   const el=document.getElementById('votesList');
@@ -514,37 +507,77 @@ function exportCSV(){
   const url='/api/export/csv'+(currentGuildId?'?guild_id='+currentGuildId:'');
   const a=document.createElement('a');a.href=url;a.download='sessions.csv';document.body.appendChild(a);a.click();a.remove();
 }
-// ── DAU Line Chart ────────────────────────────────────────────────────────────
+// ── DAU Line Chart + WAU summary + 7-day rolling avg ─────────────────────────
 async function loadDAU(){
   if(!currentGuildId)return;
   const wrap=document.getElementById('dauChartWrap');const svgEl=document.getElementById('dauSvg');
   const summary=document.getElementById('dauSummary');if(!svgEl||!wrap)return;
-  let data;try{const r=await fetch('/api/dau?guild_id='+currentGuildId+'&days=30');if(!r.ok)throw new Error(r.status);data=await r.json();}catch(e){return;}
+  let data,wauData;
+  try{
+    const [r1,r2]=await Promise.all([
+      fetch('/api/dau?guild_id='+currentGuildId+'&days=30'),
+      fetch('/api/wau-mau?guild_id='+currentGuildId+'&weeks=4'),
+    ]);
+    if(!r1.ok)throw new Error(r1.status);
+    data=await r1.json();
+    if(r2.ok)wauData=await r2.json();
+  }catch(e){return;}
   if(!data||!data.length){if(summary)summary.textContent='ยังไม่มีข้อมูล';return;}
-  const dauVals=data.map(d=>d.dau);const joinVals=data.map(d=>d.joins);
-  const maxVal=Math.max(...dauVals,...joinVals,1);
+
+  const dauVals=data.map(d=>d.dau);
+  const joinVals=data.map(d=>d.joins);
+  const maxDau=Math.max(...dauVals,1);
+  const maxJoin=Math.max(...joinVals,1);
+  const maxVal=Math.max(maxDau,maxJoin);
   const avgDAU=Math.round(dauVals.reduce((a,b)=>a+b,0)/dauVals.length);
   const peakDAU=Math.max(...dauVals);
-  if(summary)summary.innerHTML='<span>Peak DAU: <strong>'+peakDAU+'</strong></span><span>Avg DAU: <strong>'+avgDAU+'</strong></span><span>ช่วง 30 วัน</span>';
+  const todayDAU=dauVals[dauVals.length-1]||0;
+  const wauNow=wauData&&wauData.length?wauData[wauData.length-1].wau:null;
+
+  // Update KPI bar
+  const kd=document.getElementById('kpiDauToday');if(kd)kd.textContent=todayDAU;
+
+  if(summary)summary.innerHTML=
+    '<span>Peak DAU: <strong>'+peakDAU+'</strong></span>'
+    +'<span>Avg DAU: <strong>'+avgDAU+'</strong></span>'
+    +(wauNow!==null?'<span>WAU: <strong>'+wauNow+'</strong></span>':'')
+    +'<span style="color:var(--muted)">ช่วง 30 วัน</span>';
+
+  // 7-day rolling average
+  const rollAvg=dauVals.map((_,i)=>{
+    if(i<6)return null;
+    const slice=dauVals.slice(i-6,i+1);
+    return slice.reduce((a,b)=>a+b,0)/7;
+  });
+
   const W=wrap.clientWidth||300;const H=150;const PAD={t:10,r:10,b:18,l:28};
   const cW=W-PAD.l-PAD.r;const cH=H-PAD.t-PAD.b;
   function xPos(i){return PAD.l+i/(data.length-1||1)*cW;}
   function yPos(v){return PAD.t+cH-(v/maxVal*cH);}
-  // area gradient + polylines
+
   const dauPts=data.map((d,i)=>xPos(i)+','+yPos(d.dau)).join(' ');
   const joinPts=data.map((d,i)=>xPos(i)+','+yPos(d.joins)).join(' ');
   const areaPath=data.map((d,i)=>(i===0?'M':'L')+xPos(i)+' '+yPos(d.dau)).join(' ')
     +' L'+xPos(data.length-1)+' '+(PAD.t+cH)+' L'+PAD.l+' '+(PAD.t+cH)+' Z';
-  // Y-axis labels
+
+  // Rolling avg polyline (only draw where avg exists)
+  const avgSegs=[];let curSeg=[];
+  rollAvg.forEach((v,i)=>{
+    if(v===null){if(curSeg.length){avgSegs.push(curSeg);curSeg=[];}return;}
+    curSeg.push(xPos(i)+','+yPos(v));
+  });
+  if(curSeg.length)avgSegs.push(curSeg);
+  const avgLines=avgSegs.map(seg=>`<polyline points="${seg.join(' ')}" class="dau-line-avg" vector-effect="non-scaling-stroke"/>`).join('');
+
   const yLabels=[0,Math.round(maxVal/2),maxVal].map(v=>{
     const y=yPos(v);return`<text x="${PAD.l-4}" y="${y+4}" text-anchor="end" font-size="9" fill="var(--muted)">${v}</text>`;
   }).join('');
-  // X-axis labels (show 5 evenly spaced)
   const xIdxs=[0,7,14,21,29].filter(i=>i<data.length);
   const xLabels=xIdxs.map(i=>{
-    const d=data[i];const lbl=d.date.slice(5);// MM-DD
+    const d=data[i];const lbl=d.date.slice(5);
     return`<text x="${xPos(i)}" y="${PAD.t+cH+14}" text-anchor="middle" font-size="9" fill="var(--muted)">${lbl}</text>`;
   }).join('');
+
   svgEl.setAttribute('viewBox',`0 0 ${W} ${H}`);
   svgEl.innerHTML=`<defs>
     <linearGradient id="dauGrad" x1="0" y1="0" x2="0" y2="1">
@@ -554,14 +587,23 @@ async function loadDAU(){
     <path d="${areaPath}" fill="url(#dauGrad)" class="dau-area"/>
     <polyline points="${joinPts}" class="dau-line-joins" vector-effect="non-scaling-stroke"/>
     <polyline points="${dauPts}" class="dau-line" vector-effect="non-scaling-stroke"/>
+    ${avgLines}
     ${yLabels}${xLabels}
-    ${data.map((d,i)=>`<circle class="dau-dot" cx="${xPos(i)}" cy="${yPos(d.dau)}" r="3" tabindex="0"
-      aria-label="${d.date}: DAU ${d.dau}, joins ${d.joins}" role="img">
-      <title>${d.date}\nDAU: ${d.dau}\nJoins: ${d.joins}</title></circle>`).join('')}`;
+    ${data.map((d,i)=>{const avg7=rollAvg[i]!==null?'\n7d avg: '+rollAvg[i].toFixed(1):'';
+      return`<circle class="dau-dot" cx="${xPos(i)}" cy="${yPos(d.dau)}" r="3" tabindex="0"
+        aria-label="${d.date}: DAU ${d.dau}, joins ${d.joins}" role="img">
+        <title>${d.date}\nDAU: ${d.dau}\nJoins: ${d.joins}${avg7}</title></circle>`;}).join('')}`;
 }
 
-// ── Leaderboard with period selector ─────────────────────────────────────────
+// ── Leaderboard with period + sort ────────────────────────────────────────────
 let _lbPeriod='7d';
+let _lbSort='time';
+function setLbSort(sort,btn){
+  _lbSort=sort;
+  document.querySelectorAll('.sort-btn').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});
+  if(btn){btn.classList.add('active');btn.setAttribute('aria-pressed','true');}
+  loadLeaderboard();
+}
 async function loadLeaderboard(period,btn){
   if(!currentGuildId)return;
   if(period)_lbPeriod=period;
@@ -570,11 +612,22 @@ async function loadLeaderboard(period,btn){
     btn.classList.add('active');btn.setAttribute('aria-pressed','true');
   }
   const el=document.getElementById('statsList');if(!el)return;
-  let d;try{const r=await fetch('/api/leaderboard?guild_id='+currentGuildId+'&period='+_lbPeriod);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  let d;
+  try{
+    const r=await fetch('/api/leaderboard?guild_id='+currentGuildId+'&period='+_lbPeriod+'&sort='+_lbSort);
+    if(!r.ok)throw new Error(r.status);d=await r.json();
+  }catch(e){return;}
   const medals=['🥇','🥈','🥉'];
   const rankLabel=i=>medals[i]
     ?'<span aria-hidden="true">'+medals[i]+'</span><span class="sr-only">'+(i+1)+'.</span>'
     :(i+1)+'.';
+
+  // Update KPI: sessions this week (from 7d leaderboard, sum session_count if sort=sessions or just total joins)
+  if(_lbPeriod==='7d'){
+    const weekSess=d.reduce((acc,s)=>acc+(s.session_count||0),0);
+    const kw=document.getElementById('kpiWeekSessions');if(kw&&weekSess>0)kw.textContent=weekSess;
+  }
+
   el.innerHTML=!d||!d.length?'<span class="empty-msg">ยังไม่มีข้อมูล</span>'
     :d.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+rankLabel(i)+'</span>'
       +'<span class="stat-name"><a href="/profile/'+escHTML(s.uid)+'" target="_blank">'+escHTML(s.name)+'</a></span>'
@@ -615,6 +668,78 @@ async function loadRetention(){
       +'<div class="retention-week">'+escHTML(lbl)+'</div>'
       +'</div>';
   }).join('');
+}
+
+// ── 7×24 Day-of-Week Heatmap ──────────────────────────────────────────────────
+async function loadDowHeatmap(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('dowWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/dow-heatmap?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  const matrix=d.matrix;const days=d.days;
+  const flat=matrix.flat();const maxV=Math.max(...flat,1);
+  const total=flat.reduce((a,b)=>a+b,0);
+  if(total===0){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล — รอให้บอทบันทึก session ก่อน</span>';return;}
+
+  // Hour labels top
+  const hourLbls=Array.from({length:24},(_,h)=>
+    (h%6===0?'<div class="dow-hour-lbl">'+String(h).padStart(2,'0')+'</div>':'<div class="dow-hour-lbl"></div>')
+  ).join('');
+
+  // Build rows
+  const rows=matrix.map((rowData,di)=>{
+    const cells=rowData.map((cnt,h)=>{
+      const pct=cnt/maxV;
+      const alpha=cnt===0?0:0.1+pct*0.85;
+      const tooltip=days[di]+' '+String(h).padStart(2,'0')+':00 — '+cnt+' sessions';
+      return`<div class="dow-cell" style="background:rgba(88,101,242,${alpha.toFixed(2)})" title="${escHTML(tooltip)}" aria-label="${escHTML(tooltip)}"></div>`;
+    }).join('');
+    return`<div class="dow-row"><div class="dow-day-lbl">${escHTML(days[di])}</div><div class="dow-cells">${cells}</div></div>`;
+  }).join('');
+
+  wrap.innerHTML=
+    `<div class="dow-header"><div class="dow-day-lbl"></div><div class="dow-hour-row">${hourLbls}</div></div>`
+    +rows
+    +`<div style="font-size:10px;color:var(--muted);margin-top:8px">รวม ${total} sessions · สีเข้ม = active มาก</div>`;
+}
+
+// ── Session length histogram ──────────────────────────────────────────────────
+async function loadHistogram(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('histogramWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/histogram?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length||d.every(b=>b.count===0)){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  const maxC=Math.max(...d.map(b=>b.count),1);
+  const total=d.reduce((a,b)=>a+b.count,0);
+  wrap.innerHTML=d.map(b=>{
+    const pct=Math.round(b.count/maxC*100);
+    const pctTotal=total>0?Math.round(b.count/total*100):0;
+    return'<div class="hist-row">'
+      +'<div class="hist-lbl">'+escHTML(b.range)+'</div>'
+      +'<div class="hist-bar-bg"><div class="hist-bar-fill" style="width:'+pct+'%"></div></div>'
+      +'<div class="hist-count">'+b.count+' <span style="color:var(--muted);font-size:10px">('+pctTotal+'%)</span></div>'
+      +'</div>';
+  }).join('');
+}
+
+// ── History search filter ─────────────────────────────────────────────────────
+let _historyCache=[];
+async function loadHistory(){
+  const gp=currentGuildId?'?guild_id='+currentGuildId:'';
+  let d;try{const r=await fetch('/api/history'+gp);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d)return;
+  _historyCache=d.slice().reverse();  // newest first
+  filterHistory(document.getElementById('historySearch')?.value||'');
+}
+function filterHistory(q){
+  const body=document.getElementById('historyBody');
+  const rows=q
+    ?_historyCache.filter(s=>(s.name||'').toLowerCase().includes(q.toLowerCase())||(s.channel||'').toLowerCase().includes(q.toLowerCase()))
+    :_historyCache;
+  if(!rows.length){body.innerHTML='<tr><td colspan="5" style="color:var(--muted);padding:12px">'+(q?'ไม่พบ "'+escHTML(q)+'"':'ยังไม่มีข้อมูล')+'</td></tr>';return;}
+  body.innerHTML=rows.slice(0,200).map(s=>
+    '<tr><td>'+escHTML(s.name)+'</td><td style="color:var(--muted)">'+escHTML(s.channel)+'</td>'
+    +'<td style="color:var(--muted)">'+escHTML(s.join)+'</td><td style="color:var(--muted)">'+escHTML(s.leave)+'</td>'
+    +'<td>'+escHTML(s.duration)+'</td></tr>').join('');
 }
 
 async function loadLogs(){
@@ -660,16 +785,18 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
 
 buildUI();loadConfig();
 refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
-loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();loadLogs();
+loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();
+loadDowHeatmap();loadHistogram();loadLogs();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
 // Pause polling when tab is hidden to save resources
 function _poll(fn,ms){setInterval(()=>{if(!document.hidden)fn();},ms);}
 _poll(loadLogs,30000);
-_poll(refreshStatus,8000);_poll(loadHeatmap,30000);_poll(loadHistory,15000);
+_poll(refreshStatus,8000);_poll(loadHeatmap,30000);_poll(loadHistory,30000);
 _poll(loadVotes,20000);_poll(loadContribGraph,120000);_poll(loadChannelActivity,60000);
 _poll(loadDAU,120000);_poll(()=>loadLeaderboard(_lbPeriod),30000);
 _poll(loadInactive,300000);_poll(loadRetention,300000);
+_poll(loadDowHeatmap,300000);_poll(loadHistogram,120000);
 // Resume immediately when tab becomes visible again
 document.addEventListener('visibilitychange',()=>{
   if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();loadDAU();}
