@@ -7,7 +7,7 @@ import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
 from discord import app_commands
-import random, os, sys, asyncio, threading, json, secrets, urllib.request
+import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session
@@ -22,6 +22,9 @@ DASHBOARD_PORT       = int(os.environ.get('PORT', 5000))
 DASHBOARD_PASSWORD   = os.environ.get('DASHBOARD_PASSWORD', '')  # optional basic auth
 OUTBOUND_WEBHOOK_URL = os.environ.get('OUTBOUND_WEBHOOK_URL', '')  # optional outbound webhook
 DASHBOARD_API_KEY    = os.environ.get('DASHBOARD_API_KEY', '')     # optional API key for external access
+DISCORD_CLIENT_ID    = os.environ.get('DISCORD_CLIENT_ID', '')     # Discord OAuth app client ID
+DISCORD_CLIENT_SECRET = os.environ.get('DISCORD_CLIENT_SECRET', '')  # Discord OAuth app client secret
+DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')  # e.g. https://ajarnbot.up.railway.app/callback
 # =================================
 
 # ===== Paths =====
@@ -53,6 +56,8 @@ bot_config = {
     'announce_stream':          True,
     'announce_video':           True,
     'send_content':             True,
+    'send_jokes':               True,
+    'send_trivia':              True,
     'joke_delay':               15,
     'trivia_delay':             15,
     'mute_cooldown_sec':        3,
@@ -447,18 +452,25 @@ async def send_content():
         return
     # ส่งแยกแต่ละ guild ที่มีคนใน voice
     active_guilds = set(str(gid) for (gid, _) in voice_join_times.keys())
-    trivia_list = load_trivia()
-    jokes = load_jokes()
+    trivia_list = load_trivia() if bot_config.get('send_trivia', True) else []
+    jokes = load_jokes() if bot_config.get('send_jokes', True) else []
+    if not trivia_list and not jokes:
+        return
     for gid in active_guilds:
         channel = get_guild_ch(gid, 'content')
         if not channel:
             continue
-        if trivia_list and random.random() < 0.5:
-            await _post_trivia(channel, trivia_list)
-        else:
-            if jokes:
+        if trivia_list and jokes:
+            if random.random() < 0.5:
+                await _post_trivia(channel, trivia_list)
+            else:
                 category, joke = random.choice(jokes)
                 await send_joke_with_vote(channel, category, joke)
+        elif trivia_list:
+            await _post_trivia(channel, trivia_list)
+        elif jokes:
+            category, joke = random.choice(jokes)
+            await send_joke_with_vote(channel, category, joke)
 
 @tasks.loop(hours=1)
 async def weekly_summary_task():
@@ -761,45 +773,208 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated
 
-LOGIN_HTML = """<!DOCTYPE html>
+SELECT_SERVER_HTML = """<!DOCTYPE html>
 <html lang="th">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Login — VoiceLog Bot</title>
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>เลือก Server — AjarnBot</title>
 <style>
-  body{background:#1e1f22;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;font-family:'Segoe UI',sans-serif;}
-  .box{background:#2b2d31;border:1px solid #3f4147;border-radius:12px;padding:40px;width:320px;}
-  h2{color:#dbdee1;margin-bottom:24px;font-size:20px;text-align:center;}
-  input{width:100%;background:#1e1f22;border:1px solid #3f4147;border-radius:6px;color:#dbdee1;padding:10px 14px;font-size:14px;box-sizing:border-box;margin-bottom:12px;}
-  input:focus{outline:none;border-color:#5865f2;}
-  button{width:100%;background:#5865f2;color:white;border:none;border-radius:6px;padding:10px;font-size:14px;font-weight:600;cursor:pointer;}
-  button:hover{background:#4752c4;}
-  .err{color:#da373c;font-size:13px;text-align:center;margin-top:8px;}
-  .logo{text-align:center;font-size:36px;margin-bottom:16px;}
+  *{{box-sizing:border-box;margin:0;padding:0;}}
+  body{{background:#1e1f22;color:#dbdee1;font-family:'Segoe UI',sans-serif;min-height:100vh;padding:40px 16px;}}
+  .wrap{{max-width:640px;margin:0 auto;}}
+  .top{{display:flex;align-items:center;gap:12px;margin-bottom:32px;}}
+  .logo{{width:40px;height:40px;border-radius:50%;background:#5865f2;display:flex;align-items:center;justify-content:center;font-size:20px;}}
+  h1{{font-size:20px;font-weight:700;}}
+  .sub{{color:#949ba4;font-size:13px;margin-bottom:24px;}}
+  .user-info{{background:#2b2d31;border:1px solid #3f4147;border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:12px;margin-bottom:24px;}}
+  .avatar{{width:40px;height:40px;border-radius:50%;background:#5865f2;overflow:hidden;}}
+  .avatar img{{width:100%;height:100%;object-fit:cover;}}
+  .guilds{{display:grid;gap:12px;}}
+  .guild-card{{background:#2b2d31;border:1px solid #3f4147;border-radius:8px;padding:16px 20px;display:flex;align-items:center;gap:14px;text-decoration:none;color:#dbdee1;transition:border-color .15s,background .15s;cursor:pointer;}}
+  .guild-card:hover{{border-color:#5865f2;background:#313338;}}
+  .guild-icon{{width:44px;height:44px;border-radius:50%;background:#5865f2;display:flex;align-items:center;justify-content:center;font-size:18px;overflow:hidden;flex-shrink:0;}}
+  .guild-icon img{{width:100%;height:100%;object-fit:cover;}}
+  .guild-name{{font-size:15px;font-weight:600;}}
+  .guild-members{{font-size:12px;color:#949ba4;margin-top:2px;}}
+  .no-guilds{{color:#949ba4;font-size:14px;background:#2b2d31;border-radius:8px;padding:24px;text-align:center;}}
+  .logout{{color:#949ba4;font-size:12px;text-decoration:none;margin-left:auto;}}
+  .logout:hover{{color:#da373c;}}
 </style>
 </head>
-<body><div class="box">
-  <div class="logo">🎙️</div>
-  <h2>VoiceLog Bot</h2>
-  <form method="post">
-    <input name="password" type="password" placeholder="รหัสผ่าน" autofocus>
-    <button type="submit">เข้าสู่ระบบ</button>
-    {% if error %}<div class="err">{{ error }}</div>{% endif %}
+<body>
+<div class="wrap">
+  <div class="top">
+    <div class="logo">&#127908;</div>
+    <h1>AjarnBot Dashboard</h1>
+    <a href="/logout" class="logout">ออกจากระบบ</a>
+  </div>
+  <div class="user-info">
+    <div class="avatar">{avatar_html}</div>
+    <div>
+      <div style="font-size:14px;font-weight:600">{username}</div>
+      <div style="font-size:12px;color:#949ba4">เลือก Server ที่ต้องการจัดการ</div>
+    </div>
+  </div>
+  <p class="sub">Server ที่บอทอยู่และคุณเป็นสมาชิก:</p>
+  <div class="guilds">
+    {guild_cards}
+  </div>
+</div>
+</body></html>"""
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Login — AjarnBot Dashboard</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0;}}
+  body{{background:#1e1f22;color:#dbdee1;font-family:'Segoe UI',sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;}}
+  .card{{background:#2b2d31;border:1px solid #3f4147;border-radius:12px;padding:40px 36px;width:100%;max-width:380px;}}
+  .logo{{width:56px;height:56px;border-radius:50%;background:#5865f2;display:flex;align-items:center;justify-content:center;font-size:28px;margin:0 auto 20px;}}
+  h1{{text-align:center;font-size:20px;margin-bottom:6px;}}
+  .sub{{text-align:center;color:#949ba4;font-size:13px;margin-bottom:28px;}}
+  .btn-discord{{display:flex;align-items:center;justify-content:center;gap:10px;background:#5865f2;color:white;border:none;border-radius:8px;padding:12px;width:100%;font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;margin-bottom:16px;transition:filter .15s;}}
+  .btn-discord:hover{{filter:brightness(1.15);}}
+  .divider{{display:flex;align-items:center;gap:10px;color:#4e5058;font-size:12px;margin-bottom:16px;}}
+  .divider::before,.divider::after{{content:'';flex:1;height:1px;background:#3f4147;}}
+  input{{background:#1e1f22;border:1px solid #3f4147;color:#dbdee1;border-radius:6px;padding:10px 12px;width:100%;font-size:14px;margin-bottom:10px;}}
+  input:focus{{outline:none;border-color:#5865f2;}}
+  .btn-pw{{background:#4e5058;color:white;border:none;border-radius:6px;padding:10px;width:100%;font-size:14px;cursor:pointer;}}
+  .btn-pw:hover{{background:#6d6f78;}}
+  .err{{color:#da373c;font-size:13px;margin-top:10px;text-align:center;}}
+  .note{{color:#949ba4;font-size:11px;text-align:center;margin-top:16px;}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">&#127908;</div>
+  <h1>AjarnBot Dashboard</h1>
+  <p class="sub">เข้าสู่ระบบเพื่อจัดการบอท</p>
+  {discord_btn}
+  <form method="POST" action="/login">
+    <input type="password" name="password" placeholder="รหัสผ่าน Dashboard" autofocus>
+    <button type="submit" class="btn-pw">เข้าสู่ระบบด้วยรหัสผ่าน</button>
+    {error_msg}
   </form>
-</div></body></html>"""
+  <p class="note">AjarnBot Dashboard</p>
+</div>
+</body></html>"""
 
 @flask_app.route('/login', methods=['GET', 'POST'])
 def login():
-    from flask import render_template_string
     if not DASHBOARD_PASSWORD:
         return redirect('/')
-    error = None
+    discord_btn = '<a href="/login/discord" class="btn-discord"><svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>เข้าสู่ระบบด้วย Discord</a><div class="divider">หรือ</div>' if DISCORD_CLIENT_ID else ''
     if request.method == 'POST':
         if request.form.get('password') == DASHBOARD_PASSWORD:
             flask_session['logged_in'] = True
             flask_session.permanent = True
             return redirect('/')
-        error = 'รหัสผ่านไม่ถูกต้อง'
-    return render_template_string(LOGIN_HTML, error=error)
+        return LOGIN_HTML.format(discord_btn=discord_btn, error_msg='<div class="err">รหัสผ่านไม่ถูกต้อง</div>'), 200, {'Content-Type': 'text/html; charset=utf-8'}
+    return LOGIN_HTML.format(discord_btn=discord_btn, error_msg=''), 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+@flask_app.route('/login/discord')
+def login_discord():
+    if not DISCORD_CLIENT_ID:
+        return redirect('/login')
+    state = secrets.token_hex(16)
+    flask_session['oauth_state'] = state
+    params = urllib.parse.urlencode({
+        'client_id': DISCORD_CLIENT_ID,
+        'redirect_uri': DISCORD_REDIRECT_URI,
+        'response_type': 'code',
+        'scope': 'identify guilds',
+        'state': state,
+    })
+    return redirect(f'https://discord.com/api/oauth2/authorize?{params}')
+
+@flask_app.route('/callback')
+def oauth_callback():
+    code = request.args.get('code')
+    state = request.args.get('state')
+    if not code or state != flask_session.get('oauth_state'):
+        return redirect('/login')
+    try:
+        # Exchange code for token
+        data = urllib.parse.urlencode({
+            'client_id': DISCORD_CLIENT_ID,
+            'client_secret': DISCORD_CLIENT_SECRET,
+            'grant_type': 'authorization_code',
+            'code': code,
+            'redirect_uri': DISCORD_REDIRECT_URI,
+        }).encode()
+        req = urllib.request.Request('https://discord.com/api/oauth2/token', data=data,
+                                      headers={'Content-Type': 'application/x-www-form-urlencoded'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token_data = json.loads(resp.read().decode())
+        access_token = token_data['access_token']
+        # Get user info
+        req2 = urllib.request.Request('https://discord.com/api/v10/users/@me',
+                                       headers={'Authorization': f'Bearer {access_token}'})
+        with urllib.request.urlopen(req2, timeout=10) as resp2:
+            user = json.loads(resp2.read().decode())
+        # Get user guilds
+        req3 = urllib.request.Request('https://discord.com/api/v10/users/@me/guilds',
+                                       headers={'Authorization': f'Bearer {access_token}'})
+        with urllib.request.urlopen(req3, timeout=10) as resp3:
+            all_guilds = json.loads(resp3.read().decode())
+        # Filter to guilds where bot is present
+        bot_guild_ids = {str(g.id) for g in client.guilds}
+        user_guilds = [g for g in all_guilds if g['id'] in bot_guild_ids]
+        flask_session['discord_user'] = user
+        flask_session['discord_guilds'] = user_guilds
+        flask_session['logged_in'] = True
+        flask_session['current_guild_id'] = user_guilds[0]['id'] if len(user_guilds) == 1 else ''
+        return redirect('/select-server' if len(user_guilds) != 1 else '/')
+    except Exception as e:
+        log(f'Discord OAuth error: {e}')
+        return redirect('/login')
+
+@flask_app.route('/select-server')
+def select_server():
+    if not flask_session.get('logged_in'):
+        return redirect('/login')
+    user = flask_session.get('discord_user', {})
+    guilds = flask_session.get('discord_guilds', [])
+    username = user.get('global_name') or user.get('username', 'User')
+    uid = user.get('id', '')
+    avatar = user.get('avatar', '')
+    if avatar:
+        avatar_html = f'<img src="https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" alt="">'
+    else:
+        avatar_html = username[0].upper() if username else '?'
+    if not guilds:
+        guild_cards = '<div class="no-guilds">ไม่พบ Server ที่บอทอยู่ร่วมกัน<br>กรุณาเชิญบอทเข้า Server ก่อน</div>'
+    else:
+        cards = []
+        for g in guilds:
+            gid = g['id']
+            name = g.get('name', gid)
+            icon = g.get('icon', '')
+            if icon:
+                icon_html = f'<img src="https://cdn.discordapp.com/icons/{gid}/{icon}.png" alt="">'
+            else:
+                icon_html = name[0].upper() if name else '?'
+            bot_g = client.get_guild(int(gid))
+            member_count = bot_g.member_count if bot_g else ''
+            members_txt = f'{member_count} สมาชิก' if member_count else ''
+            cards.append(f'<a href="/set-guild/{gid}" class="guild-card"><div class="guild-icon">{icon_html}</div><div><div class="guild-name">{name}</div><div class="guild-members">{members_txt}</div></div></a>')
+        guild_cards = '\n'.join(cards)
+    return SELECT_SERVER_HTML.format(username=username, avatar_html=avatar_html, guild_cards=guild_cards), 200, {'Content-Type': 'text/html; charset=utf-8'}
+
+@flask_app.route('/set-guild/<guild_id>')
+def set_guild(guild_id):
+    if not flask_session.get('logged_in'):
+        return redirect('/login')
+    # Verify user is in this guild
+    guilds = flask_session.get('discord_guilds', [])
+    guild_ids = [g['id'] for g in guilds]
+    # Also allow if password-logged-in (no discord_guilds)
+    if guilds and guild_id not in guild_ids:
+        return redirect('/select-server')
+    flask_session['current_guild_id'] = guild_id
+    return redirect('/')
 
 @flask_app.route('/logout')
 def logout():
@@ -984,7 +1159,8 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
   <span id="clockThai" style="font-size:12px;color:var(--muted);margin-left:16px;font-family:monospace;letter-spacing:.5px"></span>
   <button id="themeBtn" onclick="toggleTheme()" style="margin-left:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;">🌙</button>
-  <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto">ออกจากระบบ</a>
+  <a href="/select-server" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto" title="เปลี่ยน Server">&#128279; เปลี่ยน Server</a>
+  <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:12px">ออกจากระบบ</a>
 </header>
 <main>
 <div class="card">
@@ -1007,9 +1183,23 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="card-title">ส่งมุขและ Trivia</div>
   <div class="toggle-grid" style="margin-bottom:14px">
     <div class="toggle-item">
-      <span class="toggle-label">เปิดใช้งาน</span>
+      <span class="toggle-label">เปิดใช้งาน (รวม)</span>
       <label class="switch">
         <input type="checkbox" id="toggle_send_content" onchange="toggleConfig('send_content',this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="toggle-item">
+      <span class="toggle-label">ส่งมุข</span>
+      <label class="switch">
+        <input type="checkbox" id="toggle_send_jokes" onchange="toggleConfig('send_jokes',this.checked)">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <div class="toggle-item">
+      <span class="toggle-label">ส่งคำถาม Trivia</span>
+      <label class="switch">
+        <input type="checkbox" id="toggle_send_trivia" onchange="toggleConfig('send_trivia',this.checked)">
         <span class="slider"></span>
       </label>
     </div>
@@ -1130,6 +1320,8 @@ function updateClock(){
 function applyConfig(c){
   TOGGLES.forEach(t=>{const el=document.getElementById('toggle_'+t.key);if(el)el.checked=!!c[t.key];});
   const sc=document.getElementById('toggle_send_content');if(sc)sc.checked=!!c.send_content;
+  const sj=document.getElementById('toggle_send_jokes');if(sj)sj.checked=c.send_jokes!==false;
+  const st=document.getElementById('toggle_send_trivia');if(st)st.checked=c.send_trivia!==false;
   NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
   SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
   const cv=document.getElementById('ch_voice');const cc=document.getElementById('ch_content');const cs=document.getElementById('ch_stats');
@@ -1310,7 +1502,9 @@ def service_worker():
 @flask_app.route('/')
 @require_auth
 def dashboard():
-    return DASHBOARD_HTML, 200, {'Content-Type': 'text/html; charset=utf-8'}
+    guild_id = flask_session.get('current_guild_id', '')
+    html = DASHBOARD_HTML.replace("let currentGuildId='';", f"let currentGuildId='{guild_id}';")
+    return html, 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 @flask_app.route('/profile/<uid>')
 @require_auth
