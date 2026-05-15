@@ -3,13 +3,13 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '2.0.2'
+APP_VERSION = '2.0.5'
 APP_BUILD_DATE = '2026-05-15'
 import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
 from discord import app_commands
-import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse, re
+import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse, re, hmac
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session, render_template
@@ -426,7 +426,7 @@ async def send_joke_with_vote(channel, category, joke):
     for m in sent_msgs:
         try:
             await m.delete()
-        except Exception:
+        except discord.HTTPException:
             pass
 
 async def send_leaderboard(channel, combined=None, guild_id=None):
@@ -496,7 +496,7 @@ async def _post_trivia(channel, trivia_list=None):
         if m:
             try:
                 await m.delete()
-            except Exception:
+            except discord.HTTPException:
                 pass
 
 @tasks.loop(minutes=30)
@@ -727,12 +727,12 @@ async def on_message(message):
                     await asyncio.sleep(30)
                     for del_target in [r]:
                         try: await del_target.delete()
-                        except Exception: pass
+                        except discord.HTTPException: pass
                     if qid:
                         try:
                             q = await ch.fetch_message(qid)
                             await q.delete()
-                        except Exception: pass
+                        except discord.HTTPException: pass
                 asyncio.create_task(_cleanup_trivia())
 
     if message.content.strip().lower().startswith('!rank'):
@@ -858,7 +858,8 @@ def require_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         # API key bypass (external integrations)
-        if DASHBOARD_API_KEY and request.headers.get('X-API-Key') == DASHBOARD_API_KEY:
+        received_key = request.headers.get('X-API-Key', '')
+        if DASHBOARD_API_KEY and hmac.compare_digest(received_key, DASHBOARD_API_KEY):
             return f(*args, **kwargs)
         if not flask_session.get('logged_in'):
             if request.path.startswith('/api/'):
@@ -871,7 +872,8 @@ def require_owner(f):
     """เฉพาะ owner เท่านั้น (global config, sensitive ops)"""
     @wraps(f)
     def decorated(*args, **kwargs):
-        if DASHBOARD_API_KEY and request.headers.get('X-API-Key') == DASHBOARD_API_KEY:
+        received_key = request.headers.get('X-API-Key', '')
+        if DASHBOARD_API_KEY and hmac.compare_digest(received_key, DASHBOARD_API_KEY):
             return f(*args, **kwargs)
         if not flask_session.get('logged_in'):
             return jsonify({'error': 'Unauthorized'}), 401
@@ -893,7 +895,7 @@ def login():
     # Hide password form if no DASHBOARD_PASSWORD set
     show_pw = bool(DASHBOARD_PASSWORD)
     if request.method == 'POST':
-        if DASHBOARD_PASSWORD and request.form.get('password') == DASHBOARD_PASSWORD:
+        if DASHBOARD_PASSWORD and hmac.compare_digest(request.form.get('password', ''), DASHBOARD_PASSWORD):
             flask_session['logged_in'] = True
             flask_session['login_method'] = 'password'
             flask_session.permanent = True
@@ -973,7 +975,7 @@ def oauth_callback():
         flask_session['logged_in'] = True
         flask_session['current_guild_id'] = ''   # always force guild selection
         return redirect('/select-server')
-    except Exception as e:
+    except (urllib.error.URLError, json.JSONDecodeError, KeyError, Exception) as e:
         import traceback
         log(f'Discord OAuth error: {e}\n{traceback.format_exc()}')
         return redirect('/login?oauth_error=1')

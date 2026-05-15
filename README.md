@@ -296,6 +296,13 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.0.5 — Code Quality (Security + Error Handling + Static Files)
+> Code review fixes
+
+- 🔒 **hmac.compare_digest()** — API key comparison ใน `require_auth` / `require_owner` ป้องกัน timing attack แทน `==`
+- 🎯 **Specific exceptions** — `except discord.HTTPException` แทน `except Exception` ในทุกจุดลบข้อความ
+- 📁 **Static files** — แยก CSS → `static/style.css`, JS → `static/script.js` (Jinja2 var ส่งผ่าน `window.CURRENT_GUILD_ID`) dashboard.html เหลือแค่ HTML ล้วน
+
 ### v2.0.2 — Trivia/Joke Message Cleanup + Emoji Strip
 > `auto` · Auto-delete bot messages, strip emoji from trivia
 
