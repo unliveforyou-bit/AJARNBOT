@@ -2078,6 +2078,16 @@ def api_profile(uid):
     avg_sec   = (sum(s['seconds'] for s in sessions) // len(sessions)) if sessions else 0
     # Enrich from user_daily if available
     ud = user_daily.get(str(guild_id), {}).get(uid, {})
+    # Avatar from bot cache
+    avatar_url = None
+    try:
+        guild_obj = client.get_guild(int(guild_id))
+        if guild_obj:
+            member_obj = guild_obj.get_member(int(uid))
+            if member_obj and member_obj.display_avatar:
+                avatar_url = str(member_obj.display_avatar.url)
+    except Exception:
+        pass
     return jsonify({'uid': uid, 'name': name, 'total_seconds': seconds,
                     'total_duration': format_duration(seconds), 'session_count': len(sessions),
                     'avg_duration': format_duration(avg_sec) if avg_sec else '-',
@@ -2089,7 +2099,46 @@ def api_profile(uid):
                     'channel_seconds':  ud.get('channel_seconds', {}),
                     'first_seen':       ud.get('first_seen'),
                     'last_seen':        ud.get('last_seen'),
+                    'avatar_url':       avatar_url,
                     })
+
+@flask_app.route('/api/members')
+@require_auth
+def api_members():
+    """คืน list สมาชิกทั้งหมดใน guild พร้อม stats + avatar_url"""
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    guild_obj = client.get_guild(int(guild_id))
+    ud = user_daily.get(str(guild_id), {})
+    ws = weekly_stats.get(str(guild_id), {})
+    seen = set(ud.keys()) | set(ws.keys())
+    result = []
+    for uid_str in seen:
+        udata = ud.get(uid_str, {})
+        wdata = ws.get(uid_str, {})
+        name = udata.get('name') or wdata.get('name') or 'Unknown'
+        alltime_sec = udata.get('alltime_seconds', wdata.get('seconds', 0))
+        avatar_url = None
+        try:
+            if guild_obj:
+                m = guild_obj.get_member(int(uid_str))
+                if m and m.display_avatar:
+                    avatar_url = str(m.display_avatar.url)
+        except Exception:
+            pass
+        result.append({
+            'uid':              uid_str,
+            'name':             name,
+            'alltime_seconds':  alltime_sec,
+            'alltime_duration': format_duration(alltime_sec),
+            'session_count':    udata.get('session_count', 0),
+            'last_seen':        udata.get('last_seen', ''),
+            'streak_max':       udata.get('streak_max', 0),
+            'avatar_url':       avatar_url,
+        })
+    result.sort(key=lambda x: x['alltime_seconds'], reverse=True)
+    return jsonify(result)
 
 @flask_app.route('/api/votes')
 @require_auth

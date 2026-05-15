@@ -49,6 +49,7 @@
       <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
       <li><a href="#ct-inactive-section"><i class="ph-bold ph-user-minus" aria-hidden="true"></i> Inactive Users</a></li>
       <li><a href="#ct-histogram-section"><i class="ph-bold ph-chart-bar-horizontal" aria-hidden="true"></i> Session Length</a></li>
+      <li><a href="#ct-members-section"><i class="ph-bold ph-users" aria-hidden="true"></i> สมาชิกทั้งหมด</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
       <li><a href="#ct-channel-section"><i class="ph-bold ph-speaker-high" aria-hidden="true"></i> Channel Activity</a></li>
       <li><a href="#ct-history-section"><i class="ph-bold ph-clipboard-text" aria-hidden="true"></i> Session History</a></li>
@@ -454,7 +455,23 @@
       </div>
     </section>
 
-    <!-- 12. Bot Logs -->
+    <!-- 12. Member Browser -->
+    <section class="card" id="ct-members-section" aria-labelledby="ct-members">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-users"></i></div>
+        <h2 class="card-title" id="ct-members">สมาชิกทั้งหมด</h2>
+        <button class="btn btn-secondary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadMembers()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div class="members-search-wrap">
+          <i class="ph-bold ph-magnifying-glass members-search-icon" aria-hidden="true"></i>
+          <input id="membersSearch" class="members-search" type="search" placeholder="ค้นหาชื่อสมาชิก..." oninput="filterMembers(this.value)" aria-label="ค้นหาสมาชิก">
+        </div>
+        <div id="membersList" class="members-list" role="list"><span class="empty-msg">กำลังโหลด...</span></div>
+      </div>
+    </section>
+
+    <!-- 13. Bot Logs -->
     <section class="card" id="ct-logs-section" aria-labelledby="ct-logs">
       <div class="card-header">
         <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-terminal"></i></div>

@@ -19,7 +19,8 @@
               letter-spacing:.6px;color:var(--muted);margin-bottom:14px;}
   .hero{display:flex;align-items:center;gap:20px;}
   .avatar{width:64px;height:64px;border-radius:50%;background:var(--accent);
-          display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;}
+          display:flex;align-items:center;justify-content:center;font-size:28px;flex-shrink:0;overflow:hidden;}
+  .avatar img{width:100%;height:100%;object-fit:cover;border-radius:50%;display:block;}
   .hero-info h2{font-size:22px;font-weight:700;}
   .hero-info .sub{color:var(--muted);font-size:13px;margin-top:4px;}
   .hero-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
@@ -98,18 +99,28 @@
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function fmt(sec){if(!sec)return'-';const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60);return h?h+'h '+m+'m':m+'m';}
 const uid=location.pathname.split('/').pop();
+const guildId=new URLSearchParams(location.search).get('guild_id')||'';
 async function load(){
-  let d;try{const r=await fetch('/api/profile/'+uid);if(!r.ok)throw new Error(r.status);d=await r.json();}
+  if(!guildId){document.getElementById('memberName').textContent='ไม่พบ guild_id';return;}
+  let d;try{const r=await fetch('/api/profile/'+uid+'?guild_id='+guildId);if(!r.ok)throw new Error(r.status);d=await r.json();}
   catch(e){document.getElementById('memberName').textContent='โหลดไม่ได้';return;}
 
   document.getElementById('pageTitle').textContent=esc(d.name);
   document.getElementById('memberName').textContent=esc(d.name);
   document.getElementById('memberSub').textContent='UID: '+esc(d.uid)+(d.first_seen?' · เข้าครั้งแรก '+d.first_seen.slice(0,10):'');
 
+  // Avatar
+  const avatarEl=document.getElementById('memberAvatar');
+  if(d.avatar_url){
+    avatarEl.innerHTML='<img src="'+esc(d.avatar_url)+'?size=128" alt="avatar">';
+  }else{
+    avatarEl.textContent=(d.name||'?')[0].toUpperCase();
+  }
+
   // Badges
   const badges=[];
-  if(d.streak_max>0)badges.push('<span class="badge yellow">🔥 streak max '+d.streak_max+' วัน</span>');
-  if(d.alltime_seconds)badges.push('<span class="badge green">⏱ '+fmt(d.alltime_seconds)+' ทั้งหมด</span>');
+  if(d.streak_max>0)badges.push('<span class="badge yellow">streak max '+d.streak_max+' วัน</span>');
+  if(d.alltime_seconds)badges.push('<span class="badge green">'+fmt(d.alltime_seconds)+' ทั้งหมด</span>');
   if(d.session_count)badges.push('<span class="badge blue">'+d.session_count+' sessions</span>');
   document.getElementById('heroBadges').innerHTML=badges.join('');
 

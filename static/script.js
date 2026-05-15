@@ -161,7 +161,7 @@ async function switchGuild(guildId){
     // reload all data panels
     refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
-    loadDowHeatmap();loadHistogram();
+    loadDowHeatmap();loadHistogram();loadMembers();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -746,6 +746,40 @@ function filterHistory(q){
     +'<td>'+escHTML(s.duration)+'</td></tr>').join('');
 }
 
+// ── Member browser ────────────────────────────────────────────────────────────
+let _membersCache=[];
+async function loadMembers(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('membersList');if(!wrap)return;
+  let d;try{const r=await fetch('/api/members?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}
+  catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
+  _membersCache=d||[];
+  filterMembers(document.getElementById('membersSearch')?.value||'');
+}
+function filterMembers(q){
+  const wrap=document.getElementById('membersList');if(!wrap)return;
+  const rows=q?_membersCache.filter(m=>(m.name||'').toLowerCase().includes(q.toLowerCase())):_membersCache;
+  if(!rows.length){wrap.innerHTML='<span class="empty-msg">'+(q?'ไม่พบ "'+escHTML(q)+'"':'ยังไม่มีข้อมูลสมาชิก')+'</span>';return;}
+  wrap.innerHTML=rows.map(m=>{
+    const initials=(m.name||'?')[0].toUpperCase();
+    const avatarInner=m.avatar_url
+      ?'<img src="'+escHTML(m.avatar_url)+'?size=64" alt="" loading="lazy">'
+      :escHTML(initials);
+    const meta=[
+      m.alltime_duration&&m.alltime_duration!=='-'?m.alltime_duration:'',
+      m.session_count?m.session_count+' sessions':'',
+      m.last_seen?'ล่าสุด '+m.last_seen.slice(0,10):'',
+    ].filter(Boolean).join(' · ');
+    return'<a class="member-card" href="/profile/'+encodeURIComponent(m.uid)+'?guild_id='+encodeURIComponent(currentGuildId)+'" role="listitem">'
+      +'<div class="member-avatar">'+avatarInner+'</div>'
+      +'<div class="member-info"><div class="member-name">'+escHTML(m.name)+'</div>'
+      +(meta?'<div class="member-meta">'+escHTML(meta)+'</div>':'')
+      +'</div>'
+      +'<i class="ph-bold ph-caret-right member-arrow" aria-hidden="true"></i>'
+      +'</a>';
+  }).join('');
+}
+
 async function loadLogs(){
   try{
     const r=await fetch('/api/logs');const d=await r.json();
@@ -790,7 +824,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
 buildUI();loadConfig();
 refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
 loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();
-loadDowHeatmap();loadHistogram();loadLogs();
+loadDowHeatmap();loadHistogram();loadMembers();loadLogs();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
 // Pause polling when tab is hidden to save resources
