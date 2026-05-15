@@ -20,6 +20,8 @@ function showToast(msg,err=false){
   const t=document.getElementById('toast');t.textContent=msg;
   t.className='toast show'+(err?' err':'');setTimeout(()=>t.className='toast',2200);
 }
+function escHTML(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
 function withLoading(btn,fn){
   if(!btn)return fn();
   const orig=btn.innerHTML;
@@ -78,6 +80,7 @@ async function loadConfig(){
   try{
     // Always fetch global config first — for is_owner flag + version info
     const r=await fetch('/api/config');
+    if(!r.ok)throw new Error(r.status);
     const c=await r.json();
     applyOwnerUI(!!c.is_owner);
     if(c.app_version){
@@ -114,7 +117,7 @@ async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStat
   try{
     const r=await fetch('/api/channels?guild_id='+guildId);
     const channels=await r.json();
-    const opts='<option value="">— ยังไม่เลือก —</option>'+channels.map(c=>`<option value="${c.id}">#${c.name}</option>`).join('');
+    const opts='<option value="">— ยังไม่เลือก —</option>'+channels.map(c=>`<option value="${escHTML(c.id)}">#${escHTML(c.name)}</option>`).join('');
     ids.forEach((id,i)=>{
       const sel=document.getElementById(id);
       sel.innerHTML=opts;
@@ -128,11 +131,13 @@ async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStat
 }
 async function loadGuilds(){
   try{
-    const r=await fetch('/api/my-guilds');const guilds=await r.json();
+    const r=await fetch('/api/my-guilds');
+    if(!r.ok)throw new Error(r.status);
+    const guilds=await r.json();
     // populate config-area guildSelect — show "Global" only for owners
     const sel=document.getElementById('guildSelect');
     const globalOpt=isOwner?'<option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>':'';
-    sel.innerHTML=globalOpt+guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+    sel.innerHTML=globalOpt+guilds.map(g=>`<option value="${escHTML(g.id)}">${escHTML(g.name)}</option>`).join('');
     if(currentGuildId){sel.value=currentGuildId;await onGuildChange();}
     else if(isOwner){await loadGlobalChannels();}
     else if(guilds.length>0){
@@ -141,9 +146,9 @@ async function loadGuilds(){
     }
     // populate header guild switcher
     const sw=document.getElementById('guildSwitcher');
-    sw.innerHTML='<option value="">— เลือก Server —</option>'+guilds.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
+    sw.innerHTML='<option value="">— เลือก Server —</option>'+guilds.map(g=>`<option value="${escHTML(g.id)}">${escHTML(g.name)}</option>`).join('');
     if(currentGuildId)sw.value=currentGuildId;
-  }catch(e){}
+  }catch(e){showToast('โหลดรายการ Server ไม่ได้',true);}
 }
 async function switchGuild(guildId){
   if(!guildId)return;
@@ -154,7 +159,7 @@ async function switchGuild(guildId){
     const sel=document.getElementById('guildSelect');
     if(sel){sel.value=guildId;await onGuildChange();}
     // reload all data panels
-    refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
+    refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();loadChannelActivity();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -182,14 +187,15 @@ function configEndpoint(extraBody={}){
   return ['/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
           body:JSON.stringify(extraBody)}];
 }
-async function toggleConfig(key,val){
+const toggleConfig=debounce(async function(key,val){
   const p={};p[key]=val;
   try{
     const [url,opts]=configEndpoint(p);
-    await fetch(url,opts);
+    const r=await fetch(url,opts);
+    if(!r.ok)throw new Error(r.status);
     showToast('บันทึกแล้ว');
   }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
-}
+},300);
 async function saveNums(btn){
   withLoading(btn,async()=>{
     const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
@@ -246,8 +252,9 @@ async function refreshStatus(){
     document.getElementById('upVal').textContent=d.uptime||'-';
     // event_counts are global totals — hide them in multi-guild mode
     const ec=d.event_counts||{};
-    ['evJoin','evLeave','evMute','evDeaf','evStream','evVideo'].forEach(id=>{
-      const el=document.getElementById(id);if(el)el.textContent='—';
+    const ecMap={evJoin:'join',evLeave:'leave',evMute:'mute',evDeaf:'deaf',evStream:'stream',evVideo:'video'};
+    Object.entries(ecMap).forEach(([id,key])=>{
+      const el=document.getElementById(id);if(el)el.textContent=ec[key]!=null?Number(ec[key]).toLocaleString():'—';
     });
     const vl=document.getElementById('voiceList');
     if(d.voice_users.length===0){
@@ -255,15 +262,15 @@ async function refreshStatus(){
     }else{
       // user rows — แสดงชื่อ + ห้อง + เวลา
       const userRows=d.voice_users.map(u=>{
-        const rowLabel=u.name+(u.channel?' อยู่ใน '+u.channel:'')+' นาน '+u.duration;
+        const rowLabel=escHTML(u.name)+(u.channel?' อยู่ใน '+escHTML(u.channel):'')+' นาน '+escHTML(u.duration);
         const avatarEl=u.avatar
-          ?'<img src="'+u.avatar+'" class="voice-avatar" alt="" loading="lazy">'
-          :'<div class="voice-avatar-placeholder" aria-hidden="true">'+u.name.charAt(0).toUpperCase()+'</div>';
+          ?'<img src="'+escHTML(u.avatar)+'" class="voice-avatar" alt="" loading="lazy">'
+          :'<div class="voice-avatar-placeholder" aria-hidden="true">'+escHTML(u.name.charAt(0).toUpperCase())+'</div>';
         return '<div class="stat-row" aria-label="'+rowLabel+'">'
           +avatarEl
-          +'<span class="stat-name" aria-hidden="true">'+u.name+'</span>'
-          +(u.channel?'<span class="voice-ch" aria-hidden="true"># '+u.channel+'</span>':'')
-          +'<span class="stat-time" aria-hidden="true">'+u.duration+'</span>'
+          +'<span class="stat-name" aria-hidden="true">'+escHTML(u.name)+'</span>'
+          +(u.channel?'<span class="voice-ch" aria-hidden="true"># '+escHTML(u.channel)+'</span>':'')
+          +'<span class="stat-time" aria-hidden="true">'+escHTML(u.duration)+'</span>'
           +'</div>';
       }).join('');
       // นับคนต่อห้อง → เรียงมากสุด
@@ -273,7 +280,7 @@ async function refreshStatus(){
       const chRows=chRanked.map(([ch,cnt],i)=>
         '<div class="stat-row ch-rank-row">'
         +'<span class="stat-rank">'+(i+1)+'.</span>'
-        +'<span class="stat-name"># '+ch+'</span>'
+        +'<span class="stat-name"># '+escHTML(ch)+'</span>'
         +'<span class="stat-time">'+cnt+' คน</span>'
         +'</div>'
       ).join('');
@@ -288,13 +295,14 @@ async function refreshStatus(){
     const sl=document.getElementById('statsList');
     sl.innerHTML=d.weekly_stats.length===0?'<span class="empty-msg">ยังไม่มีข้อมูล</span>'
       :d.weekly_stats.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+rankLabel(i)+'</span>'
-        +'<span class="stat-name"><a href="/profile/'+s.uid+'" target="_blank">'+s.name+'</a></span>'
-        +'<span class="stat-time">'+s.time+'</span></div>').join('');
+        +'<span class="stat-name"><a href="/profile/'+escHTML(s.uid)+'" target="_blank">'+escHTML(s.name)+'</a></span>'
+        +'<span class="stat-time">'+escHTML(s.time)+'</span></div>').join('');
   }catch(e){document.getElementById('statusLabel').textContent='กำลังเชื่อมต่อ...';}
 }
 async function loadHeatmap(){
   const gp=currentGuildId?'?guild_id='+currentGuildId:'';
-  const r=await fetch('/api/heatmap'+gp);const d=await r.json();
+  let d;try{const r=await fetch('/api/heatmap'+gp);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d)return;
   const flat={};
   for(let h=0;h<24;h++)flat[String(h)]=0;
   if(typeof Object.values(d)[0]==='object'){
@@ -417,9 +425,9 @@ async function loadContribGraph(){
 
       return`<div class="contrib-user-block">
         <div class="contrib-user-header">
-          <div class="contrib-avatar">${initial}</div>
+          <div class="contrib-avatar">${escHTML(initial)}</div>
           <div class="contrib-user-info">
-            <span class="contrib-user-name">${udata.name}</span>
+            <span class="contrib-user-name">${escHTML(udata.name)}</span>
             <div class="contrib-user-badges">
               <span class="contrib-badge accent">${totalJoins.toLocaleString()} joins</span>
               <span class="contrib-badge">${activeDays} วันที่ active</span>
@@ -444,21 +452,22 @@ async function loadContribGraph(){
 }
 async function loadHistory(){
   const gp=currentGuildId?'?guild_id='+currentGuildId:'';
-  const r=await fetch('/api/history'+gp);const d=await r.json();
+  let d;try{const r=await fetch('/api/history'+gp);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d)return;
   const body=document.getElementById('historyBody');
   if(!d.length){body.innerHTML='<tr><td colspan="5" style="color:var(--muted);padding:12px">ยังไม่มีข้อมูล</td></tr>';return;}
   body.innerHTML=d.slice().reverse().slice(0,50).map(s=>
-    '<tr><td>'+s.name+'</td><td style="color:var(--muted)">'+s.channel+'</td>'
-    +'<td style="color:var(--muted)">'+s.join+'</td><td style="color:var(--muted)">'+s.leave+'</td>'
-    +'<td>'+s.duration+'</td></tr>').join('');
+    '<tr><td>'+escHTML(s.name)+'</td><td style="color:var(--muted)">'+escHTML(s.channel)+'</td>'
+    +'<td style="color:var(--muted)">'+escHTML(s.join)+'</td><td style="color:var(--muted)">'+escHTML(s.leave)+'</td>'
+    +'<td>'+escHTML(s.duration)+'</td></tr>').join('');
 }
 async function loadVotes(){
-  const r=await fetch('/api/votes');const d=await r.json();
+  let d;try{const r=await fetch('/api/votes');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   const el=document.getElementById('votesList');
-  if(!d.length){el.innerHTML='<span class="empty-msg">ยังไม่มีคะแนน</span>';return;}
+  if(!d||!d.length){el.innerHTML='<span class="empty-msg">ยังไม่มีคะแนน</span>';return;}
   el.innerHTML=d.slice(0,20).map(v=>
     '<div class="stat-row" style="gap:10px">'
-    +'<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'+(v.filtered?';color:var(--red)':'')+'" title="'+v.joke+'">'+v.joke+'</span>'
+    +'<span style="flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'+(v.filtered?';color:var(--red)':'')+'" title="'+escHTML(v.joke)+'">'+escHTML(v.joke)+'</span>'
     +'<span style="color:var(--green);font-size:13px;min-width:36px;text-align:right"><span aria-hidden="true">👍</span><span class="sr-only">โหวตขึ้น:</span> '+v.up+'</span>'
     +'<span style="color:var(--red);font-size:13px;min-width:36px;text-align:right"><span aria-hidden="true">👎</span><span class="sr-only">โหวตลง:</span> '+v.down+'</span>'
     +(v.filtered?'<span style="font-size:11px;color:var(--red);min-width:40px">กรองแล้ว</span>':'<span style="min-width:40px"></span>')
@@ -482,6 +491,26 @@ function toggleTheme(){
     btn.setAttribute('aria-label',light?'สลับเป็นธีมมืด':'สลับเป็นธีมสว่าง');
     requestAnimationFrame(()=>{document.documentElement.removeAttribute('data-theme-switching');});
   });
+}
+async function loadChannelActivity(){
+  if(!currentGuildId)return;
+  const el=document.getElementById('channelList');if(!el)return;
+  let d;try{const r=await fetch('/api/channel-stats?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length){el.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  el.innerHTML=d.slice(0,15).map((ch,i)=>{
+    const pct=Math.round(ch.seconds/d[0].seconds*100);
+    return'<div class="stat-row" style="flex-wrap:wrap;gap:4px">'
+      +'<span class="stat-rank">'+(i+1)+'.</span>'
+      +'<span class="stat-name"># '+escHTML(ch.channel)+'</span>'
+      +'<span class="stat-time">'+escHTML(ch.duration)+'</span>'
+      +'<div style="width:100%;height:4px;background:var(--border);border-radius:2px;margin-top:2px">'
+      +'<div style="width:'+pct+'%;height:100%;background:var(--accent);border-radius:2px"></div></div>'
+      +'</div>';
+  }).join('');
+}
+function exportCSV(){
+  const url='/api/export/csv'+(currentGuildId?'?guild_id='+currentGuildId:'');
+  const a=document.createElement('a');a.href=url;a.download='sessions.csv';document.body.appendChild(a);a.click();a.remove();
 }
 async function loadLogs(){
   try{
@@ -524,8 +553,12 @@ window.addEventListener('scroll',updateSidebarActive,{passive:true});
 // Close sidebar on ESC
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
 
-buildUI();loadConfig();refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();loadLogs();
+buildUI();loadConfig();refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();loadChannelActivity();loadLogs();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
-setInterval(loadLogs,30000);
-setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);setInterval(loadContribGraph,120000);
+// Pause polling when tab is hidden to save resources
+function _poll(fn,ms){setInterval(()=>{if(!document.hidden)fn();},ms);}
+_poll(loadLogs,30000);
+_poll(refreshStatus,8000);_poll(loadHeatmap,30000);_poll(loadHistory,15000);_poll(loadVotes,20000);_poll(loadContribGraph,120000);_poll(loadChannelActivity,60000);
+// Resume immediately when tab becomes visible again
+document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();}});

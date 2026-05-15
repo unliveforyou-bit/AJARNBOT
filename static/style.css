@@ -638,6 +638,11 @@ footer a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; bo
   .main-wrapper { margin-left:0; }
   .menu-toggle { display:inline-flex; }
   main { padding:16px; }
+  /* prevent header items from overflowing on small screens */
+  header { padding:0 12px; gap:6px; overflow:hidden; }
+  #clockThai { display:none; }
+  .header-guild-switch { max-width:110px; font-size:12px; }
+  #roleBadge { font-size:11px; padding:2px 6px; }
 }
 
 /* ── Voice user avatar ── */

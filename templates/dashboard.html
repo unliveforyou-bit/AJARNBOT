@@ -45,6 +45,7 @@
     <ul class="sidebar-nav">
       <li><a href="#ct-stats-section"><i class="ph-bold ph-trophy" aria-hidden="true"></i> สถิติ</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
+      <li><a href="#ct-channel-section"><i class="ph-bold ph-speaker-high" aria-hidden="true"></i> Channel Activity</a></li>
       <li><a href="#ct-history-section"><i class="ph-bold ph-clipboard-text" aria-hidden="true"></i> Session History</a></li>
       <li><a href="#ct-logs-section"><i class="ph-bold ph-terminal" aria-hidden="true"></i> Bot Logs</a></li>
     </ul>
@@ -307,11 +308,25 @@
       </div>
     </section>
 
+    <!-- 11a. Channel Activity -->
+    <section class="card" id="ct-channel-section" aria-labelledby="ct-channel">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-speaker-high"></i></div>
+        <h2 class="card-title" id="ct-channel">กิจกรรมตาม Channel</h2>
+      </div>
+      <div class="card-body">
+        <div class="stat-list" id="channelList"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
+      </div>
+    </section>
+
     <!-- 11. Session History -->
     <section class="card" id="ct-history-section" aria-labelledby="ct-history">
       <div class="card-header">
         <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-clipboard-text"></i></div>
         <h2 class="card-title" id="ct-history">Session History — ล่าสุด 50 รายการ</h2>
+        <a id="csvExportBtn" href="#" onclick="exportCSV();return false;" class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" aria-label="Export CSV">
+          <i class="ph-bold ph-download-simple" aria-hidden="true"></i> Export CSV
+        </a>
       </div>
       <div class="card-body" style="padding:0">
         <div class="history-wrap">

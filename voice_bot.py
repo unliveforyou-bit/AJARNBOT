@@ -23,9 +23,11 @@ _lock_config  = threading.Lock()
 _lock_guild   = threading.Lock()
 _lock_hourly  = threading.Lock()
 _lock_log     = threading.Lock()
-_lock_daily      = threading.Lock()
-_lock_user_daily = threading.Lock()
-_lock_trivia     = threading.Lock()
+_lock_daily           = threading.Lock()
+_lock_user_daily      = threading.Lock()
+_lock_trivia          = threading.Lock()
+_lock_event_counts    = threading.Lock()
+_lock_active_sessions = threading.Lock()
 # ================================
 
 THAI_TZ = ZoneInfo('Asia/Bangkok')
@@ -368,9 +370,13 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
         user_daily[gid] = {}
     if uid_str not in user_daily[gid]:
         user_daily[gid][uid_str] = {'name': display_name, 'dates': {}}
-    ud = user_daily[gid][uid_str]['dates']
-    ud[date_str] = ud.get(date_str, 0) + 1
-    user_daily[gid][uid_str]['name'] = display_name
+    uentry = user_daily[gid][uid_str]
+    uentry['name'] = display_name
+    uentry['dates'][date_str] = uentry['dates'].get(date_str, 0) + 1
+    now_iso = datetime.now(THAI_TZ).isoformat()
+    if 'first_seen' not in uentry:
+        uentry['first_seen'] = now_iso
+    uentry['last_seen'] = now_iso
     save_user_daily()
     save_active_sessions()   # ← persist immediately so restart restores correctly
 
@@ -408,6 +414,19 @@ def record_leave(guild_id, member_id) -> list:
         channel_activity[gid] = {}
     channel_activity[gid][channel_name] = channel_activity[gid].get(channel_name, 0) + elapsed
     save_channel_activity()
+    # Enrich user_daily with per-session analytics
+    if gid in user_daily and uid in user_daily[gid]:
+        uentry = user_daily[gid][uid]
+        uentry['last_seen'] = leave_time.isoformat()
+        uentry['session_count'] = uentry.get('session_count', 0) + 1
+        uentry['alltime_seconds'] = uentry.get('alltime_seconds', 0) + elapsed
+        # Track per-channel seconds per user
+        ch_map = uentry.setdefault('channel_seconds', {})
+        ch_map[channel_name] = ch_map.get(channel_name, 0) + elapsed
+        # Update max streak
+        current_streak = compute_streak(uentry.get('dates', {}))
+        uentry['streak_max'] = max(uentry.get('streak_max', 0), current_streak)
+        save_user_daily()
     # Feature 5: check milestones (only for sessions >= 1 min to avoid spam on micro-joins)
     if elapsed >= 60:
         return check_and_award_milestones(gid, uid)
@@ -503,11 +522,12 @@ def load_event_counts():
 
 def save_event_counts():
     """Persist current event_counts to disk."""
-    try:
-        with open(EVENT_COUNTS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(event_counts, f, ensure_ascii=False)
-    except Exception as e:
-        print(f'[WARN] save_event_counts failed: {e}')
+    with _lock_event_counts:
+        try:
+            with open(EVENT_COUNTS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(event_counts, f, ensure_ascii=False)
+        except Exception as e:
+            print(f'[WARN] save_event_counts failed: {e}')
 
 # ── Active voice session persistence ──────────────────────────────────────────
 # Saves voice_join_times to disk so users who are already in voice don't reset
@@ -515,19 +535,20 @@ def save_event_counts():
 
 def save_active_sessions():
     """Snapshot current voice_join_times → disk."""
-    try:
-        data = {}
-        for (gid, mid), (name, join_time, channel) in voice_join_times.items():
-            key = f'{gid},{mid}'
-            data[key] = {
-                'name':    name,
-                'join':    join_time.isoformat(),
-                'channel': channel,
-            }
-        with open(ACTIVE_SESSIONS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False)
-    except Exception as e:
-        print(f'[WARN] save_active_sessions failed: {e}')
+    with _lock_active_sessions:
+        try:
+            data = {}
+            for (gid, mid), (name, join_time, channel) in list(voice_join_times.items()):
+                key = f'{gid},{mid}'
+                data[key] = {
+                    'name':    name,
+                    'join':    join_time.isoformat(),
+                    'channel': channel,
+                }
+            with open(ACTIVE_SESSIONS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False)
+        except Exception as e:
+            print(f'[WARN] save_active_sessions failed: {e}')
 
 def load_active_sessions() -> dict:
     """Load saved voice sessions → {(gid, mid): (name, join_time, channel)}."""
@@ -1844,22 +1865,51 @@ def api_config_get():
     data['app_build_date'] = APP_BUILD_DATE
     return jsonify(data)
 
+_INT_RANGES = {
+    'joke_delay':               (1,   1440),
+    'trivia_delay':             (1,   1440),
+    'content_interval':         (5,   1440),
+    'summary_hour':             (0,   23),
+    'joke_downvote_threshold':  (1,   100),
+    'spam_max_events':          (2,   100),
+    'spam_window_sec':          (10,  3600),
+    'mute_cooldown_sec':        (1,   300),
+}
+
 @flask_app.route('/api/config', methods=['POST'])
 @require_owner   # global config = owner only
 def api_config_post():
     data = request.json or {}
+    errors = {}
     for key in bot_config:
-        if key in data:
-            if key.startswith('channel_') and data[key]:
-                try:
-                    bot_config[key] = int(data[key])
-                except ValueError:
-                    pass
-            else:
-                bot_config[key] = data[key]
+        if key not in data:
+            continue
+        val = data[key]
+        if key.startswith('channel_') and val:
+            try:
+                bot_config[key] = int(val)
+            except (ValueError, TypeError):
+                errors[key] = 'must be a valid channel ID integer'
+        elif key in _INT_RANGES:
+            try:
+                v = int(val)
+                lo, hi = _INT_RANGES[key]
+                if not (lo <= v <= hi):
+                    errors[key] = f'must be between {lo} and {hi}'
+                else:
+                    bot_config[key] = v
+            except (ValueError, TypeError):
+                errors[key] = 'must be an integer'
+        else:
+            bot_config[key] = val
+    if errors:
+        return jsonify({'ok': False, 'errors': errors}), 400
     save_config()
     if 'content_interval' in data and send_content.is_running():
-        send_content.change_interval(minutes=int(bot_config['content_interval']))
+        try:
+            send_content.change_interval(minutes=int(bot_config['content_interval']))
+        except Exception:
+            pass
     return jsonify({'ok': True})
 
 @flask_app.route('/api/guild-config', methods=['GET'])
@@ -1984,6 +2034,13 @@ def api_votes():
 @flask_app.route('/api/votes/reset', methods=['POST'])
 @require_auth
 def api_votes_reset():
+    # Guild admins can reset votes for their own guild; owners can always reset
+    data = request.get_json(silent=True) or {}
+    guild_id = str(data.get('guild_id', '') or flask_session.get('current_guild_id', '')).strip()
+    if guild_id and not require_guild_access(guild_id):
+        return jsonify({'error': 'Forbidden'}), 403
+    if not guild_id and not session_is_owner():
+        return jsonify({'error': 'Forbidden — guild_id required or owner login'}), 403
     joke_votes.clear()
     save_votes()
     return jsonify({'ok': True})
@@ -2149,6 +2206,11 @@ def api_user_daily():
                     result[uid]['dates'][d] = max(result[uid]['dates'].get(d, 0), c)
             except Exception:
                 pass
+        # Merge analytics fields from persistent store
+        for field in ('first_seen', 'last_seen', 'alltime_seconds', 'session_count',
+                      'streak_max', 'channel_seconds'):
+            if field in udata:
+                result[uid][field] = udata[field]
     sorted_result = dict(sorted(result.items(), key=lambda x: sum(x[1]['dates'].values()), reverse=True)[:15])
     return jsonify(sorted_result)
 
@@ -2185,11 +2247,22 @@ def api_apikey():
     return jsonify({'enabled': True, 'key_preview': masked,
                     'usage': 'Add header: X-API-Key: <your-key>'})
 
+def _action_guild_id_or_error():
+    """Helper for action routes — extract guild_id from POST body and validate access."""
+    data = request.get_json(silent=True) or {}
+    guild_id = str(data.get('guild_id') or flask_session.get('current_guild_id') or '').strip()
+    if not guild_id:
+        return None, None   # allow owner to act without guild_id (global fallback)
+    if not require_guild_access(guild_id):
+        return None, (jsonify({'error': 'Forbidden'}), 403)
+    return guild_id, None
+
 @flask_app.route('/api/action/joke', methods=['POST'])
 @require_auth
 def api_action_joke():
-    data = request.get_json(silent=True) or {}
-    guild_id = data.get('guild_id') or flask_session.get('current_guild_id')
+    guild_id, err = _action_guild_id_or_error()
+    if err:
+        return err
     if bot_loop:
         asyncio.run_coroutine_threadsafe(_test_joke(guild_id), bot_loop)
     return jsonify({'ok': True})
@@ -2197,8 +2270,9 @@ def api_action_joke():
 @flask_app.route('/api/action/trivia', methods=['POST'])
 @require_auth
 def api_action_trivia():
-    data = request.get_json(silent=True) or {}
-    guild_id = data.get('guild_id') or flask_session.get('current_guild_id')
+    guild_id, err = _action_guild_id_or_error()
+    if err:
+        return err
     if bot_loop:
         asyncio.run_coroutine_threadsafe(_test_trivia(guild_id), bot_loop)
     return jsonify({'ok': True})
@@ -2206,6 +2280,9 @@ def api_action_trivia():
 @flask_app.route('/api/action/summary', methods=['POST'])
 @require_auth
 def api_action_summary():
+    guild_id, err = _action_guild_id_or_error()
+    if err:
+        return err
     if bot_loop:
         asyncio.run_coroutine_threadsafe(send_weekly_summary(), bot_loop)
     return jsonify({'ok': True})
@@ -2213,8 +2290,9 @@ def api_action_summary():
 @flask_app.route('/api/action/rank', methods=['POST'])
 @require_auth
 def api_action_rank():
-    data = request.get_json(silent=True) or {}
-    guild_id = data.get('guild_id') or flask_session.get('current_guild_id')
+    guild_id, err = _action_guild_id_or_error()
+    if err:
+        return err
     if bot_loop:
         async def _do():
             ch = get_guild_ch(guild_id, 'stats')
