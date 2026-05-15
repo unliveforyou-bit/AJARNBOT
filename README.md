@@ -128,7 +128,8 @@ AJARNBOT/
 ├── templates/            # Flask HTML templates (Jinja2)
 │   ├── dashboard.html    # หน้า dashboard หลัก
 │   ├── login.html        # หน้า login (Discord OAuth + password)
-│   ├── select_server.html # หน้าเลือก server
+│   ├── select_server.html # หน้าเลือก server (แสดงหลัง OAuth เสมอ)
+│   ├── no_bot.html       # หน้าชวน invite bot (เมื่อ bot ยังไม่อยู่ใน server)
 │   └── profile.html      # หน้าโปรไฟล์ member
 ├── jokes.txt             # ไฟล์มุข (แก้เพิ่มได้เลย)
 ├── trivia.txt            # ไฟล์คำถาม Trivia
@@ -183,6 +184,8 @@ Python ถูกสร้างโดยใคร|Guido van Rossum
 | `POST /api/action/joke` | ✅ | ส่งมุขทันที |
 | `POST /api/action/trivia` | ✅ | ส่ง Trivia ทันที |
 | `POST /api/action/rank` | ✅ | ส่ง leaderboard ทันที |
+| `POST /api/set-guild` | ✅ | สลับ guild ปัจจุบันใน session (guild switcher) |
+| `GET /invite` | ❌ | Redirect ไป Discord bot invite URL |
 
 **Auth:** Login ผ่าน `/login` หรือส่ง header `X-API-Key: <your-key>`
 
@@ -284,6 +287,24 @@ tzdata>=2024.1
 - 🏷️ **Role badge** ใน header — แสดง 👑 Owner หรือ 🛡️ Guild Admin
 - 👁️ **Owner-only UI sections** — การแจ้งเตือน, มุข/Trivia, Anti-Spam ซ่อนสำหรับ guild admin
 - 🔑 Password login จำกัดเฉพาะ owner (ซ่อน form ถ้าไม่ตั้ง `DASHBOARD_PASSWORD`)
+
+### v1.8.0 — Bug Fixes & Voice Improvements
+> `db21650` · Action buttons, Voice snapshot, No-overlap jokes
+
+- 🐛 **Fix action buttons** — `_test_joke()` / `_test_trivia()` / `api_action_rank` เรียก `ch_content()` / `ch_stats()` ที่ถูกลบไปแล้ว → เปลี่ยนเป็น `get_guild_ch(guild_id, type)` พร้อมส่ง `guild_id` จาก dashboard
+- 📸 **Voice snapshot on ready** — `on_ready` scan ทุก voice channel ทุก guild เพื่อ populate `voice_join_times` สำหรับคนที่นั่งอยู่ก่อน bot restart
+- 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
+- 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
+
+### v2.0.0 — Public Multi-guild & App Version
+> `278a662` · Invite link, Guild switcher, Forced guild selection, Version footer
+
+- 🌐 **Bot invite link** — `GET /invite` redirect ไป Discord OAuth2 bot invite URL พร้อม permission ครบ
+- 🔄 **Dashboard guild switcher** — dropdown ใน header เปลี่ยน server ได้ทันทีโดยไม่ reload หน้า (ใช้ `POST /api/set-guild`)
+- ➕ **"+ เพิ่ม Server" button** — ปุ่ม invite ใน dashboard header และ select_server page
+- 🔒 **Forced guild selection** — OAuth callback selects always ไป `/select-server` (ไม่ข้ามถ้า guild เดียว) — filter เฉพาะ guild ที่ user เป็น admin + bot อยู่
+- 🚫 **No-bot page** — `/no-bot` หน้าใหม่พร้อม step-by-step invite guide เมื่อ user login แต่ bot ยังไม่อยู่ใน server ใดเลย
+- 🏷️ **App version footer** — แสดง version + build date ที่ล่างสุดของ dashboard (ดึงจาก `/api/config`)
 
 ---
 

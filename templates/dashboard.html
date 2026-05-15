@@ -80,6 +80,8 @@
   .toast.show{opacity:1;transform:translateY(0);}
   .toast.err{background:var(--red);}
   @media(max-width:640px){.two-col{grid-template-columns:1fr;}}
+  footer{text-align:center;padding:20px 16px;color:var(--muted);font-size:11px;border-top:1px solid var(--border);margin-top:8px;}
+  footer a{color:var(--muted);text-decoration:none;}footer a:hover{color:var(--accent);}
   body.light{--bg:#f2f3f5;--surface:#e3e5e8;--card:#ffffff;--border:#d4d7dc;--text:#2e3035;--muted:#5c6370;}
   .guild-select{background:var(--surface);border:1px solid var(--border);color:var(--text);
     border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;max-width:160px;}
@@ -291,6 +293,14 @@ async function loadConfig(){
   const c=await r.json();
   applyConfig(c);
   applyOwnerUI(!!c.is_owner);
+  // update footer version
+  if(c.app_version){
+    const ft=document.getElementById('appFooter');
+    if(ft)ft.innerHTML='AjarnBot <span style="color:var(--accent);font-weight:700">v'+c.app_version+'</span>'
+      +' · '+c.app_build_date
+      +' · Built with discord.py + Flask'
+      +' · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a>';
+  }
 }
 async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStats){
   const ids=['ch_voice','ch_content','ch_stats'];
@@ -502,4 +512,6 @@ setInterval(loadLogs,30000);
 setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);
 </script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}</script>
-</body></html>
+</body>
+<footer id="appFooter">AjarnBot · Built with discord.py + Flask · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a></footer>
+</html>

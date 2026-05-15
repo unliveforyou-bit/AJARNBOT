@@ -3,6 +3,8 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
+APP_VERSION = '2.0.0'
+APP_BUILD_DATE = '2026-05-15'
 import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
@@ -1110,6 +1112,8 @@ def api_channels():
 def api_config_get():
     data = dict(bot_config)
     data['is_owner'] = session_is_owner()   # ส่งสถานะให้ frontend ปรับ UI
+    data['app_version'] = APP_VERSION
+    data['app_build_date'] = APP_BUILD_DATE
     return jsonify(data)
 
 @flask_app.route('/api/config', methods=['POST'])
