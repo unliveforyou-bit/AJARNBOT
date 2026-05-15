@@ -543,6 +543,16 @@ async def on_ready():
     load_votes()
     load_trivia_scores()
     log(f'Bot ready: {client.user}')
+    # Scan all voice channels — populate voice_join_times for members already in voice
+    # (bot restart clears in-memory state, so we need to rebuild it)
+    for guild in client.guilds:
+        for vc in guild.voice_channels:
+            for member in vc.members:
+                if not member.bot:
+                    key = (guild.id, member.id)
+                    if key not in voice_join_times:
+                        voice_join_times[key] = (member.display_name, datetime.now(THAI_TZ), vc.name)
+    log(f'Voice snapshot: {len(voice_join_times)} members tracked across all guilds')
     send_content.start()
     weekly_summary_task.start()
     daily_backup_task.start()
@@ -1204,15 +1214,19 @@ def api_apikey():
 @flask_app.route('/api/action/joke', methods=['POST'])
 @require_auth
 def api_action_joke():
+    data = request.get_json(silent=True) or {}
+    guild_id = data.get('guild_id') or flask_session.get('current_guild_id')
     if bot_loop:
-        asyncio.run_coroutine_threadsafe(_test_joke(), bot_loop)
+        asyncio.run_coroutine_threadsafe(_test_joke(guild_id), bot_loop)
     return jsonify({'ok': True})
 
 @flask_app.route('/api/action/trivia', methods=['POST'])
 @require_auth
 def api_action_trivia():
+    data = request.get_json(silent=True) or {}
+    guild_id = data.get('guild_id') or flask_session.get('current_guild_id')
     if bot_loop:
-        asyncio.run_coroutine_threadsafe(_test_trivia(), bot_loop)
+        asyncio.run_coroutine_threadsafe(_test_trivia(guild_id), bot_loop)
     return jsonify({'ok': True})
 
 @flask_app.route('/api/action/summary', methods=['POST'])
@@ -1225,17 +1239,20 @@ def api_action_summary():
 @flask_app.route('/api/action/rank', methods=['POST'])
 @require_auth
 def api_action_rank():
+    data = request.get_json(silent=True) or {}
+    guild_id = data.get('guild_id') or flask_session.get('current_guild_id')
     if bot_loop:
         async def _do():
-            ch = ch_stats()
+            ch = get_guild_ch(guild_id, 'stats')
             if ch:
                 await send_leaderboard(ch)
         asyncio.run_coroutine_threadsafe(_do(), bot_loop)
     return jsonify({'ok': True})
 
-async def _test_joke():
-    channel = ch_content()
+async def _test_joke(guild_id=None):
+    channel = get_guild_ch(guild_id, 'content')
     if not channel:
+        log(f'_test_joke: no content channel found for guild_id={guild_id}')
         return
     jokes = load_jokes()
     if not jokes:
@@ -1244,9 +1261,10 @@ async def _test_joke():
     category, joke = random.choice(jokes)
     await send_joke_with_vote(channel, category, joke)
 
-async def _test_trivia():
-    channel = ch_content()
+async def _test_trivia(guild_id=None):
+    channel = get_guild_ch(guild_id, 'content')
     if not channel:
+        log(f'_test_trivia: no content channel found for guild_id={guild_id}')
         return
     await _post_trivia(channel)
 # ===========================

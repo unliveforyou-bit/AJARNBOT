@@ -359,7 +359,8 @@ async function saveChannels(){
   }
 }
 async function action(type){
-  const r=await fetch('/api/action/'+type,{method:'POST'});
+  const body=JSON.stringify({guild_id:currentGuildId||null});
+  const r=await fetch('/api/action/'+type,{method:'POST',headers:{'Content-Type':'application/json'},body});
   const d=await r.json();showToast(d.ok?'ส่งแล้ว!':'เกิดข้อผิดพลาด',!d.ok);
 }
 async function refreshStatus(){
