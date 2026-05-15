@@ -296,6 +296,20 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.1.0 — Accessibility (WCAG 2.1 AA)
+> Accessibility audit — 18 issues fixed across CSS, JS, and HTML
+
+- 🎨 **Color contrast** — `--muted` สี #949ba4 → #b5bac1 (4.6:1), light mode muted → #4b5563, small-text accent → #a5b4fc สำหรับ `.stat-rank` / `.voice-ch` / footer links
+- 🔍 **Focus indicators** — เพิ่ม `:focus-visible` outline สำหรับทุก interactive element (buttons, switches, inputs, select, links)
+- 🔇 **Screen reader** — เพิ่ม `.sr-only` utility class + sr-only labels สำหรับ `#guildSwitcher`, `#guildSelect`
+- 🏷️ **Form labels** — `<label for="...">` wired ถึง `id` ของทุก input/select (channel dropdowns, number inputs, toggle switches ใช้ `aria-labelledby`)
+- 📢 **Live regions** — toast: `role="status" aria-live="polite"`, log error: `role="alert"`
+- 🟢 **Status dot** — `role="img"` + `aria-label` set dynamically ใน `refreshStatus()`
+- 📊 **Heatmap bars** — แต่ละ bar มี `role="img"` + `aria-label` บอกชั่วโมงและ join count
+- 🎭 **Emoji** — button emoji / role badge emoji ห่อด้วย `<span aria-hidden="true">` พร้อม `aria-label` บน container
+- 📋 **Table caption** — Session History table มี `<caption>` อธิบายเนื้อหา
+- 🧱 **Valid HTML** — ย้าย `<footer>` เข้าใน `</body>` (เดิมอยู่นอก body — invalid)
+
 ### v2.0.5 — Code Quality (Security + Error Handling + Static Files)
 > Code review fixes
 

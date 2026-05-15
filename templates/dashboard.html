@@ -13,11 +13,14 @@
 <header>
   <div class="logo">&#127908;</div>
   <h1>VoiceLog Bot</h1>
-  <div class="status-dot" id="statusDot"></div>
+  <!-- #16 — decorative dot; aria-label set dynamically in refreshStatus() -->
+  <div class="status-dot" id="statusDot" role="img" aria-label="กำลังเชื่อมต่อ..."></div>
   <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
   <span id="clockThai" style="font-size:12px;color:var(--muted);margin-left:16px;font-family:monospace;letter-spacing:.5px"></span>
   <button id="themeBtn" onclick="toggleTheme()" style="margin-left:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;">🌙</button>
   <span id="roleBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;color:white;margin-left:12px;"></span>
+  <!-- #6 — sr-only label wires guildSwitcher to accessible name -->
+  <label class="sr-only" for="guildSwitcher">เลือก Server</label>
   <select id="guildSwitcher" class="guild-select" style="margin-left:auto" title="เปลี่ยน Server" onchange="switchGuild(this.value)">
     <option value="">— เลือก Server —</option>
   </select>
@@ -72,19 +75,21 @@
 <div class="card">
   <div class="card-title">Channel Routing — ต่อ Server</div>
   <div style="margin-bottom:12px">
-    <label style="font-size:12px;color:var(--muted)">เลือก Server ที่ต้องการตั้งค่า</label>
+    <!-- #6 — label wired to select via for/id -->
+    <label for="guildSelect" style="font-size:12px;color:var(--muted)">เลือก Server ที่ต้องการตั้งค่า</label>
     <select id="guildSelect" onchange="onGuildChange()" style="display:block;width:100%;margin-top:6px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;font-size:14px;cursor:pointer">
       <option value="">🌐 Global (ค่าเริ่มต้นทุก Server)</option>
     </select>
   </div>
   <div class="config-grid">
-    <div class="config-item"><label>Voice Events</label>
+    <!-- #7 — channel labels wired via for/id -->
+    <div class="config-item"><label for="ch_voice">Voice Events</label>
       <select id="ch_voice" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
     </div>
-    <div class="config-item"><label>มุขและ Trivia</label>
+    <div class="config-item"><label for="ch_content">มุขและ Trivia</label>
       <select id="ch_content" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
     </div>
-    <div class="config-item"><label>Stats (!rank, สรุป)</label>
+    <div class="config-item"><label for="ch_stats">Stats (!rank, สรุป)</label>
       <select id="ch_stats" style="background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 10px;width:100%;font-size:13px"><option value="">— ยังไม่เลือก —</option></select>
     </div>
   </div>
@@ -93,11 +98,12 @@
 </div>
 <div class="card">
   <div class="card-title">การกระทำ</div>
+  <!-- #13 — action button emoji: decorative, aria-label on button carries meaning -->
   <div class="action-grid">
-    <button class="btn btn-success" onclick="action('joke')">&#127917; ส่งมุขเทส</button>
-    <button class="btn btn-success" onclick="action('trivia')">&#129300; ส่ง Trivia เทส</button>
-    <button class="btn btn-primary" onclick="action('rank')">&#128200; ส่ง !rank ทันที</button>
-    <button class="btn btn-warn"    onclick="action('summary')">&#128202; ส่งสรุปสัปดาห์</button>
+    <button class="btn btn-success" onclick="action('joke')" aria-label="ส่งมุขเทส"><span aria-hidden="true">&#127917;</span> ส่งมุขเทส</button>
+    <button class="btn btn-success" onclick="action('trivia')" aria-label="ส่ง Trivia เทส"><span aria-hidden="true">&#129300;</span> ส่ง Trivia เทส</button>
+    <button class="btn btn-primary" onclick="action('rank')" aria-label="ส่ง rank ทันที"><span aria-hidden="true">&#128200;</span> ส่ง !rank ทันที</button>
+    <button class="btn btn-warn"    onclick="action('summary')" aria-label="ส่งสรุปสัปดาห์"><span aria-hidden="true">&#128202;</span> ส่งสรุปสัปดาห์</button>
   </div>
 </div>
 <div class="card">
@@ -130,6 +136,8 @@
   <div class="card-title">Session History — ล่าสุด 50 รายการ</div>
   <div class="history-wrap">
     <table>
+      <!-- #14 — table caption for screen readers -->
+      <caption>ประวัติการเข้า-ออก Voice Channel ล่าสุด 50 รายการ</caption>
       <thead><tr><th>ชื่อ</th><th>ห้อง</th><th>เข้า</th><th>ออก</th><th>นาน</th></tr></thead>
       <tbody id="historyBody"><tr><td colspan="5" style="color:var(--muted)">ยังไม่มีข้อมูล</td></tr></tbody>
     </table>
@@ -143,10 +151,12 @@
   <div id="logBox" style="background:var(--bg);border-radius:6px;padding:12px;font-family:monospace;font-size:12px;color:var(--muted);max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all">กำลังโหลด...</div>
 </div>
 </main>
-<div class="toast" id="toast"></div>
+<!-- #4 — toast is a live region so screen readers announce it -->
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 <script>window.CURRENT_GUILD_ID = '{{ current_guild_id }}';</script>
 <script src="/static/script.js"></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}</script>
-</body>
+<!-- #18 — footer moved inside body (was outside </body>, invalid HTML) -->
 <footer id="appFooter">AjarnBot · Built with discord.py + Flask · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a></footer>
+</body>
 </html>

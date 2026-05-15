@@ -21,15 +21,17 @@ function showToast(msg,err=false){
   t.className='toast show'+(err?' err':'');setTimeout(()=>t.className='toast',2200);
 }
 function buildUI(){
+  // #10 — toggle inputs: aria-label for screen readers (visible label is in .toggle-label span)
   document.getElementById('toggleGrid').innerHTML=TOGGLES.map(t=>`
-    <div class="toggle-item"><span class="toggle-label">${t.label}</span>
-    <label class="switch"><input type="checkbox" id="toggle_${t.key}" onchange="toggleConfig('${t.key}',this.checked)">
+    <div class="toggle-item"><span class="toggle-label" id="lbl_${t.key}">${t.label}</span>
+    <label class="switch"><input type="checkbox" id="toggle_${t.key}" aria-labelledby="lbl_${t.key}" onchange="toggleConfig('${t.key}',this.checked)">
     <span class="slider"></span></label></div>`).join('');
+  // #8 — number inputs: <label for="..."> wired to input id
   document.getElementById('numGrid').innerHTML=NUMBERS.map(n=>`
-    <div class="config-item"><label>${n.label}</label>
+    <div class="config-item"><label for="num_${n.key}">${n.label}</label>
     <input type="number" id="num_${n.key}" min="${n.min}" max="${n.max}" value="0"></div>`).join('');
   document.getElementById('spamGrid').innerHTML=SPAM_NUMBERS.map(n=>`
-    <div class="config-item"><label>${n.label}</label>
+    <div class="config-item"><label for="num_${n.key}">${n.label}</label>
     <input type="number" id="num_${n.key}" min="${n.min}" max="${n.max}" value="0"></div>`).join('');
 }
 function updateClock(){
@@ -56,8 +58,14 @@ function applyOwnerUI(owner){
     el.style.display=owner?'':'none';
   });
   // แสดง badge
+  // #12 — role badge: emoji decorative, text for screen readers
   const badge=document.getElementById('roleBadge');
-  if(badge){badge.textContent=owner?'👑 Owner':'🛡️ Guild Admin';badge.style.background=owner?'#f0b232':'#5865f2';}
+  if(badge){
+    const emoji=owner?'👑':'🛡️';const label=owner?'Owner':'Guild Admin';
+    badge.innerHTML='<span aria-hidden="true">'+emoji+'</span> '+label;
+    badge.setAttribute('aria-label',label);
+    badge.style.background=owner?'#f0b232':'#5865f2';
+  }
 }
 async function loadConfig(){
   const r=await fetch('/api/config');
@@ -178,7 +186,10 @@ async function refreshStatus(){
   try{
     const gp=currentGuildId?'?guild_id='+currentGuildId:'';
     const r=await fetch('/api/status'+gp);const d=await r.json();
-    document.getElementById('statusDot').className='status-dot'+(d.online?' online':'');
+    const dot=document.getElementById('statusDot');
+    dot.className='status-dot'+(d.online?' online':'');
+    // #16 — status dot is decorative shape; dynamic aria-label conveys state
+    dot.setAttribute('aria-label',d.online?'บอทออนไลน์':'บอทออฟไลน์');
     document.getElementById('statusLabel').textContent=d.online?'ออนไลน์':'ออฟไลน์';
     document.getElementById('upVal').textContent=d.uptime||'-';
     document.getElementById('evJoin').textContent=d.event_counts.join||0;
@@ -238,7 +249,11 @@ async function loadHeatmap(){
     const count=Number(flat[String(h)]||0);const pct=Math.round((count/max)*100);
     const bar=document.createElement('div');bar.className='heatmap-bar';
     bar.style.cssText='background:rgba(88,101,242,'+(0.15+(pct/100)*0.85).toFixed(2)+');height:'+Math.max(pct,2)+'%';
-    bar.title=String(h).padStart(2,'0')+':00 — '+count+' joins';chart.appendChild(bar);}
+    const hLabel=String(h).padStart(2,'0')+':00 — '+count+' joins';
+    bar.title=hLabel;
+    // #15 — heatmap bars: role+aria-label for screen readers
+    bar.setAttribute('role','img');bar.setAttribute('aria-label',hLabel);
+    chart.appendChild(bar);}
 }
 async function loadHistory(){
   const gp=currentGuildId?'?guild_id='+currentGuildId:'';
@@ -274,7 +289,10 @@ async function loadLogs(){
     const box=document.getElementById('logBox');
     box.textContent=d.lines.join('\n')||'(ยังไม่มี log)';
     box.scrollTop=box.scrollHeight;
-  }catch(e){document.getElementById('logBox').textContent='โหลด log ไม่ได้';}
+  }catch(e){
+    // #17 — error state announced as alert
+    const box=document.getElementById('logBox');box.setAttribute('role','alert');box.textContent='โหลด log ไม่ได้';
+  }
 }
 if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');document.getElementById('themeBtn').textContent='☀️';}
 buildUI();loadConfig();loadGuilds();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
