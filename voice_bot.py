@@ -3,7 +3,7 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '2.3.3'
+APP_VERSION = '2.4.0'
 APP_BUILD_DATE = '2026-05-15'
 import discord
 from discord.ext import tasks
@@ -23,6 +23,8 @@ _lock_config  = threading.Lock()
 _lock_guild   = threading.Lock()
 _lock_hourly  = threading.Lock()
 _lock_log     = threading.Lock()
+_lock_daily      = threading.Lock()
+_lock_user_daily = threading.Lock()
 # ================================
 
 THAI_TZ = ZoneInfo('Asia/Bangkok')
@@ -63,6 +65,8 @@ TRIVIA_SCORES_FILE  = os.path.join(DATA_DIR, 'trivia_scores.json')
 GUILD_CONFIGS_FILE  = os.path.join(DATA_DIR, 'guild_configs.json')
 EVENT_COUNTS_FILE        = os.path.join(DATA_DIR, 'event_counts.json')
 ACTIVE_SESSIONS_FILE     = os.path.join(DATA_DIR, 'active_voice_sessions.json')
+DAILY_FILE       = os.path.join(DATA_DIR, 'daily_activity.json')
+USER_DAILY_FILE  = os.path.join(DATA_DIR, 'user_daily.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Warn early if no Railway persistent volume is configured
@@ -308,6 +312,22 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
         hourly_activity[gid] = {str(h): 0 for h in range(24)}
     hourly_activity[gid][hour] = hourly_activity[gid].get(hour, 0) + 1
     save_hourly()
+    # Daily activity
+    date_str = datetime.now(THAI_TZ).strftime('%Y-%m-%d')
+    if gid not in daily_activity:
+        daily_activity[gid] = {}
+    daily_activity[gid][date_str] = daily_activity[gid].get(date_str, 0) + 1
+    save_daily()
+    # User daily attendance (count joins per day per user)
+    uid_str = str(member_id)
+    if gid not in user_daily:
+        user_daily[gid] = {}
+    if uid_str not in user_daily[gid]:
+        user_daily[gid][uid_str] = {'name': display_name, 'dates': {}}
+    ud = user_daily[gid][uid_str]['dates']
+    ud[date_str] = ud.get(date_str, 0) + 1
+    user_daily[gid][uid_str]['name'] = display_name
+    save_user_daily()
     save_active_sessions()   # ← persist immediately so restart restores correctly
 
 def record_leave(guild_id, member_id):
@@ -427,6 +447,41 @@ def load_active_sessions() -> dict:
     return result
 # ──────────────────────────────────────────────────────────────────────────────
 # ==================================
+
+# ===== Daily Activity =====
+daily_activity = {}   # {guild_id: {"YYYY-MM-DD": int}}
+
+def load_daily():
+    global daily_activity
+    if os.path.exists(DAILY_FILE):
+        try:
+            with open(DAILY_FILE, encoding='utf-8') as f:
+                daily_activity = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_daily failed: {e}')
+
+def save_daily():
+    with _lock_daily:
+        with open(DAILY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(daily_activity, f, ensure_ascii=False)
+
+# ===== User Daily Attendance =====
+user_daily = {}   # {guild_id: {uid: {"name": str, "dates": {"YYYY-MM-DD": int}}}}
+
+def load_user_daily():
+    global user_daily
+    if os.path.exists(USER_DAILY_FILE):
+        try:
+            with open(USER_DAILY_FILE, encoding='utf-8') as f:
+                user_daily = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_user_daily failed: {e}')
+
+def save_user_daily():
+    with _lock_user_daily:
+        with open(USER_DAILY_FILE, 'w', encoding='utf-8') as f:
+            json.dump(user_daily, f, ensure_ascii=False)
+# =================================
 
 # ===== Logging =====
 def log(msg):
@@ -648,9 +703,12 @@ async def daily_backup_task():
 # ===== Feature 6: Periodic event_counts save =====
 @tasks.loop(minutes=5)
 async def save_event_counts_task():
-    """Save event_counts + active voice sessions every 5 minutes."""
+    """Save event_counts + active sessions + heatmap data every 5 minutes."""
     save_event_counts()
     save_active_sessions()
+    save_hourly()
+    save_daily()
+    save_user_daily()
 # ==================================================
 
 # ===== Feature 6: Bot status rotation =====
@@ -685,6 +743,8 @@ async def on_ready():
     load_history()
     load_votes()
     load_trivia_scores()
+    load_daily()
+    load_user_daily()
     load_event_counts()   # ← restore persisted event counters
     log(f'Bot ready: {client.user}')
     log(f'DATA_DIR: {DATA_DIR} ({"persistent volume" if os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") else "⚠️ ephemeral — data will be lost on redeploy!"})')
@@ -1218,7 +1278,10 @@ def api_status():
         if guild_id and str(gid) != guild_id:
             continue
         elapsed = int((datetime.now(THAI_TZ) - join_time).total_seconds())
-        voice_users.append({'name': name, 'duration': format_duration(elapsed), 'channel': ch, 'guild_id': str(gid)})
+        guild_obj = client.get_guild(gid)
+        member_obj = guild_obj.get_member(mid) if guild_obj else None
+        avatar_url = str(member_obj.display_avatar.url) if member_obj and member_obj.display_avatar else None
+        voice_users.append({'name': name, 'duration': format_duration(elapsed), 'channel': ch, 'guild_id': str(gid), 'avatar': avatar_url})
     combined = get_stats_for_period('week', guild_id=guild_id)
     stats_sorted   = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
     weekly_display = [{'uid': k, 'name': v['name'], 'time': format_duration(v['seconds'])} for k, v in stats_sorted[:10]]
@@ -1398,6 +1461,90 @@ def api_votes_reset():
 @require_auth
 def api_trivia_scores():
     return jsonify(trivia_scores)
+
+@flask_app.route('/api/daily-heatmap')
+@require_auth
+def api_daily_heatmap():
+    guild_id = request.args.get('guild_id')
+    days = int(request.args.get('days', 365))
+    now = datetime.now(THAI_TZ)
+    cutoff = now - timedelta(days=days)
+    result = {}
+    for s in session_history:
+        if guild_id and s.get('guild_id') != guild_id:
+            continue
+        try:
+            join_date = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            if join_date < cutoff:
+                continue
+            d = join_date.strftime('%Y-%m-%d')
+            result[d] = result.get(d, 0) + 1
+        except Exception:
+            pass
+    if guild_id:
+        gdata = daily_activity.get(str(guild_id), {})
+    else:
+        gdata = {}
+        for gd in daily_activity.values():
+            for d, c in gd.items():
+                gdata[d] = gdata.get(d, 0) + c
+    for d, c in gdata.items():
+        try:
+            dt = datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=THAI_TZ)
+            if dt >= cutoff:
+                result[d] = max(result.get(d, 0), c)
+        except Exception:
+            pass
+    return jsonify(result)
+
+@flask_app.route('/api/user-daily')
+@require_auth
+def api_user_daily():
+    guild_id = request.args.get('guild_id')
+    days = int(request.args.get('days', 365))
+    now = datetime.now(THAI_TZ)
+    cutoff = now - timedelta(days=days)
+    result = {}
+    for s in session_history:
+        if guild_id and s.get('guild_id') != guild_id:
+            continue
+        try:
+            join_date = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            if join_date < cutoff:
+                continue
+            uid = s.get('uid', '')
+            name = s.get('name', 'Unknown')
+            d = join_date.strftime('%Y-%m-%d')
+            if uid not in result:
+                result[uid] = {'name': name, 'dates': {}}
+            result[uid]['dates'][d] = result[uid]['dates'].get(d, 0) + 1
+            result[uid]['name'] = name
+        except Exception:
+            pass
+    if guild_id:
+        gdata = user_daily.get(str(guild_id), {})
+    else:
+        gdata = {}
+        for gd in user_daily.values():
+            for uid, udata in gd.items():
+                if uid not in gdata:
+                    gdata[uid] = {'name': udata['name'], 'dates': dict(udata.get('dates', {}))}
+                else:
+                    for d2, c2 in udata.get('dates', {}).items():
+                        gdata[uid]['dates'][d2] = gdata[uid]['dates'].get(d2, 0) + c2
+                    gdata[uid]['name'] = udata['name']
+    for uid, udata in gdata.items():
+        if uid not in result:
+            result[uid] = {'name': udata['name'], 'dates': {}}
+        for d, c in udata.get('dates', {}).items():
+            try:
+                dt = datetime.strptime(d, '%Y-%m-%d').replace(tzinfo=THAI_TZ)
+                if dt >= cutoff:
+                    result[uid]['dates'][d] = max(result[uid]['dates'].get(d, 0), c)
+            except Exception:
+                pass
+    sorted_result = dict(sorted(result.items(), key=lambda x: sum(x[1]['dates'].values()), reverse=True)[:15])
+    return jsonify(sorted_result)
 
 @flask_app.route('/health')
 def health():

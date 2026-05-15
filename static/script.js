@@ -228,7 +228,11 @@ async function refreshStatus(){
       // user rows — แสดงชื่อ + ห้อง + เวลา
       const userRows=d.voice_users.map(u=>{
         const rowLabel=u.name+(u.channel?' อยู่ใน '+u.channel:'')+' นาน '+u.duration;
+        const avatarEl=u.avatar
+          ?'<img src="'+u.avatar+'" class="voice-avatar" alt="" loading="lazy">'
+          :'<div class="voice-avatar-placeholder" aria-hidden="true">'+u.name.charAt(0).toUpperCase()+'</div>';
         return '<div class="stat-row" aria-label="'+rowLabel+'">'
+          +avatarEl
           +'<span class="stat-name" aria-hidden="true">'+u.name+'</span>'
           +(u.channel?'<span class="voice-ch" aria-hidden="true"># '+u.channel+'</span>':'')
           +'<span class="stat-time" aria-hidden="true">'+u.duration+'</span>'
@@ -287,6 +291,74 @@ async function loadHeatmap(){
   }
   // rAF ensures initial scaleY(0.02) from CSS renders first → transition fires
   requestAnimationFrame(()=>{bars.forEach(({el,scale})=>{el.style.transform='scaleY('+scale+')';});});
+}
+async function loadContribGraph(){
+  const gp=currentGuildId?'?guild_id='+currentGuildId+'&days=365':'?days=365';
+  const container=document.getElementById('contribGrid');
+  if(!container)return;
+  try{
+    const r=await fetch('/api/user-daily'+gp);
+    const data=await r.json();
+    const users=Object.entries(data);
+    if(!users.length){container.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+
+    // Build 53-week date grid (Sunday-based, like GitHub)
+    const today=new Date();today.setHours(0,0,0,0);
+    const todayDow=today.getDay(); // 0=Sun
+    // Start from the Sunday 52 full weeks ago
+    const startDate=new Date(today);
+    startDate.setDate(today.getDate()-todayDow-52*7);
+    const totalCells=53*7;
+    const allDates=[];
+    for(let i=0;i<totalCells;i++){
+      const d=new Date(startDate);d.setDate(startDate.getDate()+i);
+      allDates.push(d.toISOString().split('T')[0]);
+    }
+
+    const html=users.map(([uid,udata])=>{
+      const dateMap=udata.dates||{};
+      const totalJoins=Object.values(dateMap).reduce((a,b)=>a+b,0);
+      const maxVal=Math.max(...Object.values(dateMap),1);
+      function level(count){
+        if(!count||count===0)return 'l0';
+        const r=count/maxVal;
+        if(r<=0.25)return 'l1';
+        if(r<=0.50)return 'l2';
+        if(r<=0.75)return 'l3';
+        return 'l4';
+      }
+      const cells=allDates.map(key=>{
+        const dt=new Date(key);
+        const isFuture=dt>today;
+        const count=dateMap[key]||0;
+        const lbl=dt.toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'2-digit'});
+        const tip=lbl+(count?' · '+count+' joins':' · ไม่มีกิจกรรม');
+        const cls=isFuture?'lx':level(count);
+        return '<div class="contrib-cell '+cls+'" title="'+tip+'"></div>';
+      }).join('');
+
+      const activeDays=Object.keys(dateMap).length;
+      return '<div class="contrib-user-block">'
+        +'<div class="contrib-user-header">'
+        +'<span class="contrib-user-name">'+udata.name+'</span>'
+        +'<span class="contrib-user-total">'+totalJoins+' joins · '+activeDays+' วัน</span>'
+        +'</div>'
+        +'<div class="contrib-grid-wrap"><div class="contrib-grid">'+cells+'</div></div>'
+        +'</div>';
+    }).join('');
+
+    container.innerHTML=html
+      +'<div class="contrib-legend">น้อย'
+      +'<div class="contrib-legend-cells">'
+      +'<div class="contrib-cell l0" style="width:11px;height:11px;border-radius:2px"></div>'
+      +'<div class="contrib-cell l1" style="width:11px;height:11px;border-radius:2px"></div>'
+      +'<div class="contrib-cell l2" style="width:11px;height:11px;border-radius:2px"></div>'
+      +'<div class="contrib-cell l3" style="width:11px;height:11px;border-radius:2px"></div>'
+      +'<div class="contrib-cell l4" style="width:11px;height:11px;border-radius:2px"></div>'
+      +'</div>มาก</div>';
+  }catch(e){
+    if(container)container.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';
+  }
 }
 async function loadHistory(){
   const gp=currentGuildId?'?guild_id='+currentGuildId:'';
@@ -370,7 +442,7 @@ window.addEventListener('scroll',updateSidebarActive,{passive:true});
 // Close sidebar on ESC
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
 
-buildUI();loadConfig();loadGuilds();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
+buildUI();loadConfig();loadGuilds();refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();loadLogs();
 updateClock();setInterval(updateClock,1000);
 setInterval(loadLogs,30000);
-setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);
+setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);setInterval(loadContribGraph,120000);

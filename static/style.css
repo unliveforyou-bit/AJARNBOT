@@ -615,6 +615,79 @@ footer a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; bo
   main { padding:16px; }
 }
 
+/* ── Voice user avatar ── */
+.voice-avatar {
+  width:28px;
+  height:28px;
+  border-radius:50%;
+  object-fit:cover;
+  flex-shrink:0;
+  border:1px solid var(--border-strong);
+}
+.voice-avatar-placeholder {
+  width:28px;
+  height:28px;
+  border-radius:50%;
+  background:var(--accent-subtle);
+  border:1px solid var(--accent-border);
+  color:var(--accent);
+  font-size:12px;
+  font-weight:700;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  flex-shrink:0;
+}
+
+/* ── GitHub Contribution Grid ── */
+.contrib-section { padding:16px 20px; }
+.contrib-user-block { margin-bottom:20px; }
+.contrib-user-block:last-child { margin-bottom:0; }
+.contrib-user-header {
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:8px;
+}
+.contrib-user-name { font-size:13px; font-weight:600; color:var(--text); }
+.contrib-user-total { font-size:11px; color:var(--muted); }
+.contrib-grid-wrap { overflow-x:auto; }
+.contrib-grid {
+  display:grid;
+  grid-template-rows:repeat(7,11px);
+  grid-auto-flow:column;
+  gap:2px;
+  width:max-content;
+}
+.contrib-cell {
+  width:11px;
+  height:11px;
+  border-radius:2px;
+  cursor:pointer;
+  transition:opacity 0.1s ease, transform 0.1s cubic-bezier(0.22,1,0.36,1);
+}
+.contrib-cell:hover { opacity:0.75; transform:scale(1.2); }
+.contrib-cell.l0 { background:rgba(88,166,255,0.07); }
+.contrib-cell.l1 { background:rgba(88,166,255,0.28); }
+.contrib-cell.l2 { background:rgba(88,166,255,0.52); }
+.contrib-cell.l3 { background:rgba(88,166,255,0.76); }
+.contrib-cell.l4 { background:rgba(88,166,255,1.00); }
+.contrib-cell.lx { background:transparent; }
+.contrib-legend {
+  display:flex;
+  align-items:center;
+  gap:4px;
+  margin-top:6px;
+  font-size:11px;
+  color:var(--muted);
+}
+.contrib-legend-cells { display:flex; gap:2px; }
+body.light .contrib-cell.l0 { background:rgba(9,105,218,0.07); }
+body.light .contrib-cell.l1 { background:rgba(9,105,218,0.22); }
+body.light .contrib-cell.l2 { background:rgba(9,105,218,0.45); }
+body.light .contrib-cell.l3 { background:rgba(9,105,218,0.70); }
+body.light .contrib-cell.l4 { background:rgba(9,105,218,1.00); }
+
 /* ── Disable transitions during theme switch ── */
 [data-theme-switching] * { transition:none !important; }
 

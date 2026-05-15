@@ -25,6 +25,7 @@
     <ul class="sidebar-nav">
       <li><a href="#ct-status-section"><i class="ph-bold ph-chart-bar" aria-hidden="true"></i> สถานะ Bot</a></li>
       <li><a href="#ct-heatmap-section"><i class="ph-bold ph-fire" aria-hidden="true"></i> Heatmap</a></li>
+      <li><a href="#ct-contrib-section"><i class="ph-bold ph-calendar-dots" aria-hidden="true"></i> Contribution</a></li>
       <li><a href="#ct-voice-section"><i class="ph-bold ph-microphone-stage" aria-hidden="true"></i> Voice Live</a></li>
     </ul>
   </div>
@@ -244,6 +245,18 @@
       <div class="card-body">
         <div class="heatmap-wrap" id="heatmapChart"></div>
         <div class="heatmap-labels"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span></div>
+      </div>
+    </section>
+
+    <!-- 6b. GitHub Contribution Graph per user -->
+    <section class="card" id="ct-contrib-section" aria-labelledby="ct-contrib">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-calendar-dots"></i></div>
+        <h2 class="card-title" id="ct-contrib">Voice Activity — รายผู้ใช้</h2>
+        <span style="font-size:11px;color:var(--muted)">1 ปีล่าสุด</span>
+      </div>
+      <div class="contrib-section" id="contribGrid">
+        <span class="empty-msg">กำลังโหลด...</span>
       </div>
     </section>
 
