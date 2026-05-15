@@ -48,12 +48,18 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 - รองรับ **PWA** — กด "Add to Home Screen" บนมือถือได้
 - Log viewer แสดง bot log ล่าสุด 100 บรรทัด (auto-refresh 30s)
 
-### 🔒 Security & Auth
-- **Discord OAuth2 login** — เข้าสู่ระบบด้วย Discord account
-- Server selector — เลือก server ก่อนเข้า dashboard (multi-guild)
-- Password fallback — รองรับ login ด้วยรหัสผ่านกรณีไม่ใช้ Discord OAuth
-- **API Key** support — ส่ง `X-API-Key` header สำหรับ external access
-- Rate limiting บน commands (30 วินาที cooldown)
+### 🔒 Security & Auth — Multi-user
+
+| Role | เงื่อนไข | สิทธิ์ |
+|------|----------|--------|
+| 👑 **Owner** | Discord ID อยู่ใน `OWNER_IDS` หรือ password login | ทุกอย่าง — global config, anti-spam, announcements, ทุก guild |
+| 🛡️ **Guild Admin** | Discord login + มีสิทธิ์ ADMINISTRATOR/MANAGE_GUILD | channel routing ของ guild ตัวเองเท่านั้น |
+
+- **Discord OAuth2** — ทางหลัก, ทุกคนใช้ Discord account login ได้
+- **Password fallback** — สำหรับ owner เท่านั้น (ตั้ง `DASHBOARD_PASSWORD`)
+- **API Key** support — `X-API-Key` header สำหรับ external/programmatic access
+- Role badge แสดงใน header (👑 Owner / 🛡️ Guild Admin)
+- Rate limiting บน Discord commands (30 วินาที cooldown)
 
 ### ⚙️ System
 - `/health` endpoint สำหรับ uptime monitoring (UptimeRobot, BetterStack)
@@ -92,9 +98,12 @@ cd AJARNBOT
 | `DISCORD_CLIENT_ID` | แนะนำ | Application ID จาก Discord Developer Portal (สำหรับ OAuth login) |
 | `DISCORD_CLIENT_SECRET` | แนะนำ | Client Secret จาก Discord Developer Portal |
 | `DISCORD_REDIRECT_URI` | แนะนำ | `https://ajarnbot.up.railway.app/callback` |
-| `DASHBOARD_PASSWORD` | แนะนำ | Password fallback สำหรับเข้า dashboard โดยไม่ใช้ Discord |
+| `OWNER_IDS` | แนะนำ | Discord User ID ของ owner คั่นด้วย `,` เช่น `123456,789012` — ได้รับสิทธิ์ full access |
+| `DASHBOARD_PASSWORD` | ไม่บังคับ | Password emergency สำหรับ owner login โดยไม่ใช้ Discord |
 | `DASHBOARD_API_KEY` | ไม่บังคับ | API Key สำหรับ external access ผ่าน `X-API-Key` header |
 | `OUTBOUND_WEBHOOK_URL` | ไม่บังคับ | URL รับ event join/leave (n8n, Make ฯลฯ) |
+
+> **วิธีหา Discord User ID:** Discord Settings → Advanced → เปิด Developer Mode → คลิกขวาที่ชื่อตัวเอง → Copy User ID
 
 ### 4. เปิด Bot Intents
 
@@ -262,6 +271,19 @@ tzdata>=2024.1
 - 📁 **Flask Templates** — แยก HTML ออกจาก Python เป็น `templates/*.html` (Jinja2)
 - ⚠️ **Startup validation** — แจ้งเตือนทันทีถ้าไม่ตั้งค่า `FLASK_SECRET`
 - 🐛 **Fix silent exceptions** — `except: pass` → `except as e: log(...)` ทุกจุด
+- 🧪 **Unit Tests** — 29 tests สำหรับ `format_duration`, `get_stats_for_period`, `register_joke_msg`
+- 📦 `bot_utils.py` — แยก pure functions ออกจาก Discord/Flask dependencies
+
+### v1.7.0 — Multi-user Access Control
+> `a32b032` · Role-based access, OWNER_IDS, Permission enforcement
+
+- 👑 **Role system** — Owner vs Guild Admin สิทธิ์แยกกันชัดเจน
+- 🆔 **`OWNER_IDS` env var** — ระบุ Discord User ID ของ owner (full access)
+- 🔐 **`require_owner` decorator** — global config API ถูก block สำหรับ non-owner
+- 🛡️ **Guild permission check** — `/api/guild-config` POST ตรวจ ADMINISTRATOR/MANAGE_GUILD
+- 🏷️ **Role badge** ใน header — แสดง 👑 Owner หรือ 🛡️ Guild Admin
+- 👁️ **Owner-only UI sections** — การแจ้งเตือน, มุข/Trivia, Anti-Spam ซ่อนสำหรับ guild admin
+- 🔑 Password login จำกัดเฉพาะ owner (ซ่อน form ถ้าไม่ตั้ง `DASHBOARD_PASSWORD`)
 
 ---
 
