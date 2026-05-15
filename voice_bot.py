@@ -923,37 +923,58 @@ def select_server():
         avatar_html = f'<img src="https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" alt="">'
     else:
         avatar_html = username[0].upper() if username else '?'
-    if not guilds:
-        guild_cards = '<div class="no-guilds">ไม่พบ Server ที่บอทอยู่ร่วมกัน<br>กรุณาเชิญบอทเข้า Server ก่อน</div>'
-    else:
-        cards = []
-        for g in guilds:
-            gid = g['id']
-            name = g.get('name', gid)
-            icon = g.get('icon', '')
-            if icon:
-                icon_html = f'<img src="https://cdn.discordapp.com/icons/{gid}/{icon}.png" alt="">'
-            else:
-                icon_html = name[0].upper() if name else '?'
-            bot_g = client.get_guild(int(gid))
-            member_count = bot_g.member_count if bot_g else ''
-            members_txt = f'{member_count} สมาชิก' if member_count else ''
-            cards.append(f'<a href="/set-guild/{gid}" class="guild-card"><div class="guild-icon">{icon_html}</div><div><div class="guild-name">{name}</div><div class="guild-members">{members_txt}</div></div></a>')
-        guild_cards = '\n'.join(cards)
+    cards = []
+    for g in guilds:
+        gid = g['id']
+        name = g.get('name', gid)
+        icon = g.get('icon', '')
+        if icon:
+            icon_html = f'<img src="https://cdn.discordapp.com/icons/{gid}/{icon}.png" alt="">'
+        else:
+            icon_html = name[0].upper() if name else '?'
+        bot_g = client.get_guild(int(gid))
+        member_count = bot_g.member_count if bot_g else ''
+        members_txt = f'{member_count} สมาชิก' if member_count else ''
+        cards.append(f'<a href="/set-guild/{gid}" class="guild-card"><div class="guild-icon">{icon_html}</div><div><div class="guild-name">{name}</div><div class="guild-members">{members_txt}</div></div></a>')
+    guild_cards = '\n'.join(cards)   # empty string → Jinja2 `if guild_cards` = False → show empty state
     return render_template('select_server.html', username=username, avatar_html=avatar_html, guild_cards=guild_cards)
 
 @flask_app.route('/set-guild/<guild_id>')
 def set_guild(guild_id):
     if not flask_session.get('logged_in'):
         return redirect('/login')
-    # Verify user is in this guild
     guilds = flask_session.get('discord_guilds', [])
     guild_ids = [g['id'] for g in guilds]
-    # Also allow if password-logged-in (no discord_guilds)
     if guilds and guild_id not in guild_ids:
         return redirect('/select-server')
     flask_session['current_guild_id'] = guild_id
     return redirect('/')
+
+@flask_app.route('/api/set-guild', methods=['POST'])
+@require_auth
+def api_set_guild():
+    """Switch current guild without full page reload — used by dashboard guild switcher"""
+    data = request.get_json(silent=True) or {}
+    guild_id = str(data.get('guild_id', ''))
+    guilds = flask_session.get('discord_guilds', [])
+    guild_ids = [g['id'] for g in guilds]
+    if guilds and guild_id not in guild_ids:
+        return jsonify({'error': 'Forbidden'}), 403
+    flask_session['current_guild_id'] = guild_id
+    return jsonify({'ok': True, 'guild_id': guild_id})
+
+@flask_app.route('/invite')
+def bot_invite():
+    """Redirect to Discord bot invite URL"""
+    if not DISCORD_CLIENT_ID:
+        return 'DISCORD_CLIENT_ID ยังไม่ได้ตั้งค่า', 503
+    # Permissions: VIEW_CHANNEL + SEND_MESSAGES + READ_MESSAGE_HISTORY + ADD_REACTIONS + USE_APPLICATION_COMMANDS
+    perms = 1024 + 2048 + 65536 + 64 + 2147483648
+    url = (f'https://discord.com/oauth2/authorize'
+           f'?client_id={DISCORD_CLIENT_ID}'
+           f'&scope=bot+applications.commands'
+           f'&permissions={perms}')
+    return redirect(url)
 
 @flask_app.route('/logout')
 def logout():

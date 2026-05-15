@@ -24,6 +24,12 @@
   .no-guilds{color:#949ba4;font-size:14px;background:#2b2d31;border-radius:8px;padding:24px;text-align:center;}
   .logout{color:#949ba4;font-size:12px;text-decoration:none;margin-left:auto;}
   .logout:hover{color:#da373c;}
+  .invite-bar{background:#1a3a2a;border:1px solid #23a559;border-radius:8px;padding:12px 16px;
+    display:flex;align-items:center;gap:12px;margin-bottom:20px;}
+  .invite-bar p{flex:1;color:#dbdee1;font-size:13px;}
+  .invite-bar a{background:#23a559;color:white;text-decoration:none;border-radius:6px;
+    padding:8px 16px;font-size:13px;font-weight:600;white-space:nowrap;}
+  .invite-bar a:hover{filter:brightness(1.15);}
 </style>
 </head>
 <body>
@@ -40,9 +46,21 @@
       <div style="font-size:12px;color:#949ba4">เลือก Server ที่ต้องการจัดการ</div>
     </div>
   </div>
-  <p class="sub">Server ที่บอทอยู่และคุณเป็นสมาชิก:</p>
+  <div class="invite-bar">
+    <p>ต้องการเพิ่มบอทเข้า Server ใหม่? กด Invite แล้วเลือก Server ที่ต้องการ</p>
+    <a href="/invite" target="_blank">+ Invite Bot</a>
+  </div>
+  <p class="sub">Server ที่บอทเข้าร่วมแล้วและคุณเป็นแอดมิน:</p>
   <div class="guilds">
-    {{ guild_cards | safe }}
+    {% if guild_cards %}
+      {{ guild_cards | safe }}
+    {% else %}
+      <div class="no-guilds">
+        <div style="font-size:32px;margin-bottom:12px">🎙️</div>
+        <p style="margin-bottom:16px">บอทยังไม่ได้เข้าร่วม Server ใดที่คุณเป็นแอดมิน</p>
+        <a href="/invite" target="_blank" style="background:#23a559;color:white;text-decoration:none;border-radius:6px;padding:10px 20px;font-weight:600">+ Invite Bot เข้า Server ของคุณ</a>
+      </div>
+    {% endif %}
   </div>
 </div>
 </body></html>
