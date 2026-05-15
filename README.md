@@ -1,7 +1,8 @@
-# 🎙️ VoiceLog Bot
+# 🎙️ AjarnBot
 
 **Discord bot สำหรับ log กิจกรรม Voice Channel พร้อม Web Dashboard**  
-Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไม่ต้องเปิดคอมทิ้งไว้
+Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไม่ต้องเปิดคอมทิ้งไว้  
+🌐 Dashboard: [ajarnbot.up.railway.app](https://ajarnbot.up.railway.app)
 
 ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=flat&logo=python&logoColor=white)
 ![discord.py](https://img.shields.io/badge/discord.py-2.3+-5865F2?style=flat&logo=discord&logoColor=white)
@@ -47,8 +48,10 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 - รองรับ **PWA** — กด "Add to Home Screen" บนมือถือได้
 - Log viewer แสดง bot log ล่าสุด 100 บรรทัด (auto-refresh 30s)
 
-### 🔒 Security
-- Session-based login (username: `admin`, password จาก env var)
+### 🔒 Security & Auth
+- **Discord OAuth2 login** — เข้าสู่ระบบด้วย Discord account
+- Server selector — เลือก server ก่อนเข้า dashboard (multi-guild)
+- Password fallback — รองรับ login ด้วยรหัสผ่านกรณีไม่ใช้ Discord OAuth
 - **API Key** support — ส่ง `X-API-Key` header สำหรับ external access
 - Rate limiting บน commands (30 วินาที cooldown)
 
@@ -67,8 +70,8 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 ### 1. Fork หรือ Clone repo นี้
 
 ```bash
-git clone https://github.com/unliveforyou-bit/voicebot-railway.git
-cd voicebot-railway
+git clone https://github.com/unliveforyou-bit/AJARNBOT.git
+cd AJARNBOT
 ```
 
 ### 2. สร้างโปรเจกต์บน Railway
@@ -85,8 +88,12 @@ cd voicebot-railway
 |----------|--------|----------|
 | `DISCORD_TOKEN` | ✅ | Bot token จาก [Discord Developer Portal](https://discord.com/developers) |
 | `VOICE_LOG_CHANNEL_ID` | ✅ | Channel ID สำหรับส่ง log |
-| `DASHBOARD_PASSWORD` | แนะนำ | Password เข้า web dashboard |
-| `DASHBOARD_API_KEY` | ไม่บังคับ | API Key สำหรับ external access |
+| `FLASK_SECRET` | ✅ | Secret key สำหรับ Flask session (ใช้ค่า hex 32 ตัว fixed ไม่เปลี่ยน) |
+| `DISCORD_CLIENT_ID` | แนะนำ | Application ID จาก Discord Developer Portal (สำหรับ OAuth login) |
+| `DISCORD_CLIENT_SECRET` | แนะนำ | Client Secret จาก Discord Developer Portal |
+| `DISCORD_REDIRECT_URI` | แนะนำ | `https://ajarnbot.up.railway.app/callback` |
+| `DASHBOARD_PASSWORD` | แนะนำ | Password fallback สำหรับเข้า dashboard โดยไม่ใช้ Discord |
+| `DASHBOARD_API_KEY` | ไม่บังคับ | API Key สำหรับ external access ผ่าน `X-API-Key` header |
 | `OUTBOUND_WEBHOOK_URL` | ไม่บังคับ | URL รับ event join/leave (n8n, Make ฯลฯ) |
 
 ### 4. เปิด Bot Intents
@@ -107,20 +114,21 @@ cd voicebot-railway
 ## 📁 โครงสร้างไฟล์
 
 ```
-voicebot-railway/
-├── voice_bot.py       # Bot หลัก + Flask dashboard
-├── jokes.txt          # ไฟล์มุข (แก้เพิ่มได้เลย)
-├── trivia.txt         # ไฟล์คำถาม Trivia
-├── requirements.txt   # Python dependencies
-├── Procfile           # Railway start command
-├── .env.example       # ตัวอย่าง environment variables
-└── data/              # ข้อมูล runtime (gitignored)
+AJARNBOT/
+├── voice_bot.py          # Bot หลัก + Flask dashboard (all-in-one)
+├── jokes.txt             # ไฟล์มุข (แก้เพิ่มได้เลย)
+├── trivia.txt            # ไฟล์คำถาม Trivia
+├── requirements.txt      # Python dependencies
+├── Procfile              # Railway start command
+├── .env.example          # ตัวอย่าง environment variables
+└── data/                 # ข้อมูล runtime (gitignored)
     ├── voice_stats.json
     ├── session_history.json
     ├── hourly_activity.json
     ├── joke_votes.json
     ├── trivia_scores.json
-    └── bot_config.json
+    ├── bot_config.json
+    └── guild_configs.json  # Per-guild channel settings (multi-guild)
 ```
 
 ---
@@ -226,6 +234,30 @@ tzdata>=2024.1
 - 🔑 **API Key authentication** — `X-API-Key` header สำหรับ external access
 - 📋 **Log viewer** บน dashboard — ดู bot log ล่าสุด 100 บรรทัด real-time
 - 🔍 `/api/apikey` endpoint ตรวจสอบสถานะ API key
+
+### v1.5.0 — Multi-guild & Discord OAuth
+> `dde0f72` · Discord OAuth2 login, Server selector, Per-guild config
+
+- 🔐 **Discord OAuth2 login** — เข้าสู่ระบบด้วย Discord account (scopes: `identify guilds`)
+- 🖥️ **Server selector page** — เลือก server ก่อนเข้า dashboard
+- 🌐 **Per-guild channel config** — ตั้ง channel แยกต่อ server ผ่าน `guild_configs.json`
+- 🔇 **Skip content เมื่อไม่มีคนใน voice** — บอทไม่ส่งมุข/trivia เมื่อห้องว่าง
+- 🃏 **แยก toggle มุข/trivia** — เปิด/ปิดอิสระจากกันใน dashboard
+- ⏰ **Real-time clock** และ anti-spam settings บน dashboard
+- 🔒 `FLASK_SECRET` env var — session key คงที่ข้ามการ deploy
+- 🌐 Domain เปลี่ยนเป็น `ajarnbot.up.railway.app`
+
+---
+
+## ⚠️ Known Issues / ปัญหาที่พบ
+
+| ปัญหา | สาเหตุ | สถานะ |
+|-------|--------|--------|
+| Dashboard ไม่แสดงข้อมูล | `FLASK_SECRET` สุ่มใหม่ทุก deploy → session invalid | ✅ แก้แล้ว (ใช้ env var) |
+| `DISCORD_CLIENT_ID` ผิด | Railway ใส่ค่าเป็น `Client ID` ตัวอักษรแทน ID จริง | ✅ แก้แล้ว |
+| OAuth callback 403 Forbidden | `urllib.request` ไม่ส่ง `User-Agent` → Discord block | ✅ แก้แล้ว |
+| OAuth เด้งกลับ login | State mismatch เพราะ SameSite cookie / session loss | ✅ แก้แล้ว (SESSION_COOKIE_SAMESITE=Lax) |
+| OAuth callback ยังมีปัญหา | `DISCORD_CLIENT_SECRET` อาจผิด / redirect_uri ไม่ตรง | 🔄 กำลังตรวจสอบ |
 
 ---
 
