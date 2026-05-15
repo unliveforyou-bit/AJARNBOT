@@ -61,6 +61,8 @@ bot_config = {
     'channel_voice':   VOICE_LOG_CHANNEL_ID,
     'channel_content': VOICE_LOG_CHANNEL_ID,
     'channel_stats':   VOICE_LOG_CHANNEL_ID,
+    'spam_max_events': 5,
+    'spam_window_sec': 60,
 }
 
 def load_config():
@@ -214,11 +216,13 @@ def fire_outbound_webhook(event, payload):
 def check_voice_spam(guild_id, member_id):
     key = (guild_id, member_id)
     now = datetime.now(THAI_TZ)
+    spam_window = bot_config.get('spam_window_sec', SPAM_WINDOW_SEC)
+    spam_max    = bot_config.get('spam_max_events', SPAM_MAX_EVENTS)
     events = voice_spam_tracker.get(key, [])
-    events = [t for t in events if (now - t).total_seconds() < SPAM_WINDOW_SEC]
+    events = [t for t in events if (now - t).total_seconds() < spam_window]
     events.append(now)
     voice_spam_tracker[key] = events
-    return len(events) >= SPAM_MAX_EVENTS
+    return len(events) >= spam_max
 # =====================
 
 # ===== record join/leave (Multi-guild) =====
@@ -952,6 +956,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <h1>VoiceLog Bot</h1>
   <div class="status-dot" id="statusDot"></div>
   <span class="status-label" id="statusLabel">กำลังเชื่อมต่อ...</span>
+  <span id="clockThai" style="font-size:12px;color:var(--muted);margin-left:16px;font-family:monospace;letter-spacing:.5px"></span>
   <button id="themeBtn" onclick="toggleTheme()" style="margin-left:12px;background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;">🌙</button>
   <a href="/logout" style="color:var(--muted);font-size:12px;text-decoration:none;margin-left:auto">ออกจากระบบ</a>
 </header>
@@ -1025,6 +1030,12 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <div class="btn-row"><button class="btn btn-danger" onclick="resetVotes()">รีเซ็ตคะแนนทั้งหมด</button></div>
 </div>
 <div class="card">
+  <div class="card-title">⚙️ การตั้งค่าบอท — Anti-Spam</div>
+  <div class="config-grid" id="spamGrid"></div>
+  <div style="margin-top:10px;color:var(--muted);font-size:12px">บอทจะแจ้งเตือนถ้าใครเข้า-ออก Voice เกินจำนวนครั้งสูงสุดในช่วงเวลาที่กำหนด</div>
+  <div class="btn-row"><button class="btn btn-primary" onclick="saveSpam()">บันทึก</button></div>
+</div>
+<div class="card">
   <div class="card-title">Session History — ล่าสุด 50 รายการ</div>
   <div class="history-wrap">
     <table>
@@ -1050,12 +1061,16 @@ const TOGGLES=[
   {key:'announce_video',label:'กล้อง'},
 ];
 const NUMBERS=[
-  {key:'content_interval',label:'ส่งทุก (นาที)',min:5,max:240},
+  {key:'content_interval',label:'ส่งมุข/Trivia ทุก (นาที)',min:5,max:240},
   {key:'joke_delay',label:'หน่วงมุข (วินาที)',min:0,max:60},
   {key:'trivia_delay',label:'หน่วง Trivia (วินาที)',min:0,max:60},
   {key:'mute_cooldown_sec',label:'Cooldown Mute (วิ)',min:0,max:30},
-  {key:'summary_hour',label:'ส่งสรุป (ชั่วโมง)',min:0,max:23},
+  {key:'summary_hour',label:'ส่งสรุปรายวัน (ชม.)',min:0,max:23},
   {key:'joke_downvote_threshold',label:'👎 เพื่อกรองมุข',min:1,max:20},
+];
+const SPAM_NUMBERS=[
+  {key:'spam_max_events',label:'Anti-spam: ครั้งสูงสุด',min:2,max:30},
+  {key:'spam_window_sec',label:'Anti-spam: ช่วงเวลา (วิ)',min:10,max:300},
 ];
 function showToast(msg,err=false){
   const t=document.getElementById('toast');t.textContent=msg;
@@ -1069,11 +1084,21 @@ function buildUI(){
   document.getElementById('numGrid').innerHTML=NUMBERS.map(n=>`
     <div class="config-item"><label>${n.label}</label>
     <input type="number" id="num_${n.key}" min="${n.min}" max="${n.max}" value="0"></div>`).join('');
+  document.getElementById('spamGrid').innerHTML=SPAM_NUMBERS.map(n=>`
+    <div class="config-item"><label>${n.label}</label>
+    <input type="number" id="num_${n.key}" min="${n.min}" max="${n.max}" value="0"></div>`).join('');
+}
+function updateClock(){
+  const now=new Date();
+  const date=now.toLocaleDateString('th-TH',{timeZone:'Asia/Bangkok',day:'numeric',month:'short',year:'2-digit'});
+  const time=now.toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+  document.getElementById('clockThai').textContent='🕐 '+date+' '+time;
 }
 function applyConfig(c){
   TOGGLES.forEach(t=>{const el=document.getElementById('toggle_'+t.key);if(el)el.checked=!!c[t.key];});
   const sc=document.getElementById('toggle_send_content');if(sc)sc.checked=!!c.send_content;
   NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
+  SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
   const cv=document.getElementById('ch_voice');const cc=document.getElementById('ch_content');const cs=document.getElementById('ch_stats');
   if(cv)cv.value=c.channel_voice||'';if(cc)cc.value=c.channel_content||'';if(cs)cs.value=c.channel_stats||'';
 }
@@ -1087,6 +1112,11 @@ async function saveNums(){
   const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
   await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
   showToast('บันทึกแล้ว');
+}
+async function saveSpam(){
+  const p={};SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
+  await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+  showToast('บันทึก Anti-spam แล้ว');
 }
 async function saveChannels(){
   const p={channel_voice:document.getElementById('ch_voice').value.trim(),
@@ -1177,6 +1207,7 @@ async function loadLogs(){
 }
 if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');document.getElementById('themeBtn').textContent='☀️';}
 buildUI();loadConfig();refreshStatus();loadHeatmap();loadHistory();loadVotes();loadLogs();
+updateClock();setInterval(updateClock,1000);
 setInterval(loadLogs,30000);
 setInterval(refreshStatus,8000);setInterval(loadHeatmap,30000);setInterval(loadHistory,15000);setInterval(loadVotes,20000);
 </script>
