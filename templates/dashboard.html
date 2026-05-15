@@ -60,6 +60,9 @@
   .stat-name a:hover{color:var(--accent);}
   .stat-time{font-size:12px;color:var(--muted);}
   .empty-msg{color:var(--muted);font-size:13px;}
+  .voice-ch{font-size:11px;color:var(--accent);background:rgba(88,101,242,.15);border-radius:4px;padding:1px 6px;white-space:nowrap;}
+  .ch-rank-divider{font-size:11px;color:var(--muted);margin:8px 0 4px;border-top:1px solid var(--border);padding-top:8px;}
+  .ch-rank-row{opacity:.85;}
   .heatmap-wrap{display:flex;align-items:flex-end;gap:3px;height:100px;}
   .heatmap-bar{flex:1;border-radius:3px 3px 0 0;min-height:2px;transition:height .3s;cursor:default;}
   .heatmap-labels{display:flex;justify-content:space-between;margin-top:4px;color:var(--muted);font-size:10px;}
@@ -377,8 +380,32 @@ async function refreshStatus(){
     document.getElementById('evStream').textContent=d.event_counts.stream||0;
     document.getElementById('evVideo').textContent=d.event_counts.video||0;
     const vl=document.getElementById('voiceList');
-    vl.innerHTML=d.voice_users.length===0?'<span class="empty-msg">ไม่มีใครอยู่</span>'
-      :d.voice_users.map(u=>'<div class="stat-row"><span class="stat-name">'+u.name+'</span><span class="stat-time">'+u.duration+'</span></div>').join('');
+    if(d.voice_users.length===0){
+      vl.innerHTML='<span class="empty-msg">ไม่มีใครอยู่</span>';
+    }else{
+      // user rows — แสดงชื่อ + ห้อง + เวลา
+      const userRows=d.voice_users.map(u=>
+        '<div class="stat-row">'
+        +'<span class="stat-name">'+u.name+'</span>'
+        +(u.channel?'<span class="voice-ch"># '+u.channel+'</span>':'')
+        +'<span class="stat-time">'+u.duration+'</span>'
+        +'</div>'
+      ).join('');
+      // นับคนต่อห้อง → เรียงมากสุด
+      const chMap={};
+      d.voice_users.forEach(u=>{const c=u.channel||'?';chMap[c]=(chMap[c]||0)+1;});
+      const chRanked=Object.entries(chMap).sort((a,b)=>b[1]-a[1]);
+      const chRows=chRanked.map(([ch,cnt],i)=>
+        '<div class="stat-row ch-rank-row">'
+        +'<span class="stat-rank">'+(i+1)+'.</span>'
+        +'<span class="stat-name"># '+ch+'</span>'
+        +'<span class="stat-time">'+cnt+' คน</span>'
+        +'</div>'
+      ).join('');
+      vl.innerHTML=userRows
+        +'<div class="ch-rank-divider">ลำดับห้องเสียงยอดนิยม</div>'
+        +chRows;
+    }
     const medals=['🥇','🥈','🥉'];const sl=document.getElementById('statsList');
     sl.innerHTML=d.weekly_stats.length===0?'<span class="empty-msg">ยังไม่มีข้อมูล</span>'
       :d.weekly_stats.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+(medals[i]||(i+1)+'.')+'</span>'
