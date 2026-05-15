@@ -3,7 +3,7 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '2.3.0'
+APP_VERSION = '2.3.1'
 APP_BUILD_DATE = '2026-05-15'
 import discord
 from discord.ext import tasks
@@ -59,9 +59,16 @@ HOURLY_FILE  = os.path.join(DATA_DIR, 'hourly_activity.json')
 HISTORY_FILE = os.path.join(DATA_DIR, 'session_history.json')
 VOTES_FILE   = os.path.join(DATA_DIR, 'joke_votes.json')
 LOG_FILE     = os.path.join(DATA_DIR, 'bot.log')
-TRIVIA_SCORES_FILE = os.path.join(DATA_DIR, 'trivia_scores.json')
-GUILD_CONFIGS_FILE = os.path.join(DATA_DIR, 'guild_configs.json')
+TRIVIA_SCORES_FILE  = os.path.join(DATA_DIR, 'trivia_scores.json')
+GUILD_CONFIGS_FILE  = os.path.join(DATA_DIR, 'guild_configs.json')
+EVENT_COUNTS_FILE   = os.path.join(DATA_DIR, 'event_counts.json')
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# Warn early if no Railway persistent volume is configured
+if not os.environ.get('RAILWAY_VOLUME_MOUNT_PATH'):
+    print('⚠️  WARNING: RAILWAY_VOLUME_MOUNT_PATH not set — data is stored in ephemeral container storage.')
+    print('⚠️  All stats/history/config WILL BE LOST on every Railway deploy!')
+    print('⚠️  Fix: Railway dashboard → your service → Volumes → Add Volume → mount at /data')
 # =================
 
 MAX_HISTORY      = 200
@@ -357,6 +364,26 @@ def check_command_rate(user_id, cmd):
 # ===== Uptime + event counter =====
 start_time   = datetime.now(THAI_TZ)
 event_counts = {'join': 0, 'leave': 0, 'mute': 0, 'deaf': 0, 'stream': 0, 'video': 0}
+
+def load_event_counts():
+    """Load persisted event_counts from disk (survives bot restart)."""
+    if os.path.exists(EVENT_COUNTS_FILE):
+        try:
+            with open(EVENT_COUNTS_FILE, encoding='utf-8') as f:
+                saved = json.load(f)
+            for k in event_counts:
+                if k in saved:
+                    event_counts[k] = int(saved[k])
+        except Exception as e:
+            print(f'[WARN] load_event_counts failed: {e}')
+
+def save_event_counts():
+    """Persist current event_counts to disk."""
+    try:
+        with open(EVENT_COUNTS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(event_counts, f, ensure_ascii=False)
+    except Exception as e:
+        print(f'[WARN] save_event_counts failed: {e}')
 # ==================================
 
 # ===== Logging =====
@@ -576,6 +603,13 @@ async def daily_backup_task():
             save_history()
             log(f'Auto-purged {purged} sessions older than 90 days')
 
+# ===== Feature 6: Periodic event_counts save =====
+@tasks.loop(minutes=5)
+async def save_event_counts_task():
+    """Save event_counts every 5 minutes so restarts don't lose them."""
+    save_event_counts()
+# ==================================================
+
 # ===== Feature 6: Bot status rotation =====
 _status_index = 0
 
@@ -608,7 +642,9 @@ async def on_ready():
     load_history()
     load_votes()
     load_trivia_scores()
+    load_event_counts()   # ← restore persisted event counters
     log(f'Bot ready: {client.user}')
+    log(f'DATA_DIR: {DATA_DIR} ({"persistent volume" if os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") else "⚠️ ephemeral — data will be lost on redeploy!"})')
     # Scan all voice channels — populate voice_join_times for members already in voice
     # (bot restart clears in-memory state, so we need to rebuild it)
     for guild in client.guilds:
@@ -623,6 +659,7 @@ async def on_ready():
     weekly_summary_task.start()
     daily_backup_task.start()
     rotate_status.start()
+    save_event_counts_task.start()   # ← save event_counts every 5 min
     await client.tree.sync()
 
 @client.tree.command(name="rank", description="แสดงอันดับ Voice")

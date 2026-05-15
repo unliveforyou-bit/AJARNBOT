@@ -296,6 +296,16 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.3.1 — Fix data loss on Railway redeploy
+> Event counters and data files no longer disappear after pushing updates
+
+- 💾 **Persist `event_counts`** — join/leave/mute/deaf/stream/video ถูก save ลง `data/event_counts.json` ทุก 5 นาที + โหลดคืนใน `on_ready` — ไม่ reset เป็น 0 อีกต่อไปหลัง restart
+- ⚠️ **Volume warning** — startup log เตือนถ้าไม่ได้ตั้ง `RAILWAY_VOLUME_MOUNT_PATH` ว่าข้อมูลทั้งหมดจะหายเมื่อ redeploy
+- 🔄 **`save_event_counts_task`** — `@tasks.loop(minutes=5)` task ใหม่ save counters ทุก 5 นาที
+
+> **Note:** ถ้าข้อมูล JSON (sessions, stats, history) ยังหายอยู่ → ต้องตั้ง Railway Volume:
+> Railway dashboard → service → Volumes → Add Volume → mount path = `/data`
+
 ### v2.3.0 — Dashboard Redesign (GitHub Dark + Sidebar Layout)
 > Complete visual overhaul — GitHub Dark aesthetic, fixed sidebar navigation, Geist typography
 
