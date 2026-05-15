@@ -3,7 +3,7 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '2.3.1'
+APP_VERSION = '2.3.2'
 APP_BUILD_DATE = '2026-05-15'
 import discord
 from discord.ext import tasks
@@ -61,7 +61,8 @@ VOTES_FILE   = os.path.join(DATA_DIR, 'joke_votes.json')
 LOG_FILE     = os.path.join(DATA_DIR, 'bot.log')
 TRIVIA_SCORES_FILE  = os.path.join(DATA_DIR, 'trivia_scores.json')
 GUILD_CONFIGS_FILE  = os.path.join(DATA_DIR, 'guild_configs.json')
-EVENT_COUNTS_FILE   = os.path.join(DATA_DIR, 'event_counts.json')
+EVENT_COUNTS_FILE        = os.path.join(DATA_DIR, 'event_counts.json')
+ACTIVE_SESSIONS_FILE     = os.path.join(DATA_DIR, 'active_voice_sessions.json')
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # Warn early if no Railway persistent volume is configured
@@ -307,12 +308,14 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
         hourly_activity[gid] = {str(h): 0 for h in range(24)}
     hourly_activity[gid][hour] = hourly_activity[gid].get(hour, 0) + 1
     save_hourly()
+    save_active_sessions()   # ← persist immediately so restart restores correctly
 
 def record_leave(guild_id, member_id):
     key = (guild_id, member_id)
     if key not in voice_join_times:
         return
     display_name, join_time, channel_name = voice_join_times.pop(key)
+    save_active_sessions()   # ← remove this user from the active-sessions snapshot
     leave_time = datetime.now(THAI_TZ)
     elapsed    = int((leave_time - join_time).total_seconds())
     gid = str(guild_id)
@@ -384,6 +387,45 @@ def save_event_counts():
             json.dump(event_counts, f, ensure_ascii=False)
     except Exception as e:
         print(f'[WARN] save_event_counts failed: {e}')
+
+# ── Active voice session persistence ──────────────────────────────────────────
+# Saves voice_join_times to disk so users who are already in voice don't reset
+# to 0 minutes after a bot restart/Railway redeploy.
+
+def save_active_sessions():
+    """Snapshot current voice_join_times → disk."""
+    try:
+        data = {}
+        for (gid, mid), (name, join_time, channel) in voice_join_times.items():
+            key = f'{gid},{mid}'
+            data[key] = {
+                'name':    name,
+                'join':    join_time.isoformat(),
+                'channel': channel,
+            }
+        with open(ACTIVE_SESSIONS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        print(f'[WARN] save_active_sessions failed: {e}')
+
+def load_active_sessions() -> dict:
+    """Load saved voice sessions → {(gid, mid): (name, join_time, channel)}."""
+    result = {}
+    if not os.path.exists(ACTIVE_SESSIONS_FILE):
+        return result
+    try:
+        with open(ACTIVE_SESSIONS_FILE, encoding='utf-8') as f:
+            data = json.load(f)
+        for key, v in data.items():
+            gid_str, mid_str = key.split(',', 1)
+            join_time = datetime.fromisoformat(v['join'])
+            if join_time.tzinfo is None:
+                join_time = join_time.replace(tzinfo=THAI_TZ)
+            result[(int(gid_str), int(mid_str))] = (v['name'], join_time, v['channel'])
+    except Exception as e:
+        print(f'[WARN] load_active_sessions failed: {e}')
+    return result
+# ──────────────────────────────────────────────────────────────────────────────
 # ==================================
 
 # ===== Logging =====
@@ -606,8 +648,9 @@ async def daily_backup_task():
 # ===== Feature 6: Periodic event_counts save =====
 @tasks.loop(minutes=5)
 async def save_event_counts_task():
-    """Save event_counts every 5 minutes so restarts don't lose them."""
+    """Save event_counts + active voice sessions every 5 minutes."""
     save_event_counts()
+    save_active_sessions()
 # ==================================================
 
 # ===== Feature 6: Bot status rotation =====
@@ -647,14 +690,24 @@ async def on_ready():
     log(f'DATA_DIR: {DATA_DIR} ({"persistent volume" if os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") else "⚠️ ephemeral — data will be lost on redeploy!"})')
     # Scan all voice channels — populate voice_join_times for members already in voice
     # (bot restart clears in-memory state, so we need to rebuild it)
+    # Restore join times for users who were in voice before restart.
+    # This prevents their duration from resetting to 0 after a redeploy.
+    saved_sessions = load_active_sessions()
+    restored = 0
     for guild in client.guilds:
         for vc in guild.voice_channels:
             for member in vc.members:
                 if not member.bot:
                     key = (guild.id, member.id)
                     if key not in voice_join_times:
-                        voice_join_times[key] = (member.display_name, datetime.now(THAI_TZ), vc.name)
-    log(f'Voice snapshot: {len(voice_join_times)} members tracked across all guilds')
+                        if key in saved_sessions:
+                            # Restore original join time — duration continues from before restart
+                            voice_join_times[key] = saved_sessions[key]
+                            restored += 1
+                        else:
+                            # New user (joined while bot was offline) — use now as fallback
+                            voice_join_times[key] = (member.display_name, datetime.now(THAI_TZ), vc.name)
+    log(f'Voice snapshot: {len(voice_join_times)} members tracked ({restored} sessions restored from disk)')
     send_content.start()
     weekly_summary_task.start()
     daily_backup_task.start()

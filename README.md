@@ -296,6 +296,13 @@ tzdata>=2024.1
 - 🚫 **No-overlap jokes/trivia** — เพิ่ม `active_joke_channels` set ป้องกันส่ง joke/trivia ซ้อนกันใน channel เดียวกัน (`try/finally` ป้องกัน lock ค้าง)
 - 🎙️ **Voice list UI** — แสดง `# ชื่อห้อง` badge ต่อ user + section ลำดับห้องยอดนิยมตามจำนวนคน (computed client-side)
 
+### v2.3.2 — Fix voice session duration reset to 0 after restart
+> Users already in voice no longer show 0 minutes after Railway redeploy
+
+- 💾 **Persist active voice sessions** — `voice_join_times` ถูก save ลง `data/active_voice_sessions.json` ทันทีเมื่อมีคนเข้า/ออก voice + ทุก 5 นาที
+- 🔄 **Restore join times on restart** — `on_ready` โหลด snapshot กลับมา → ผู้ใช้ที่นั่งอยู่แล้วจะ **ต่อเวลาจากเดิม** แทนที่จะเริ่มนับ 0
+- 🕐 **Fallback** — user ที่เข้า voice ขณะ bot offline จะใช้ now() เป็น join time (unavoidable)
+
 ### v2.3.1 — Fix data loss on Railway redeploy
 > Event counters and data files no longer disappear after pushing updates
 
