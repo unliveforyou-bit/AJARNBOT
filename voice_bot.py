@@ -897,14 +897,19 @@ def oauth_callback():
                                                 'User-Agent': UA})
         with urllib.request.urlopen(req3, timeout=10) as resp3:
             all_guilds = json.loads(resp3.read().decode())
-        # Filter to guilds where bot is present
+        # Filter to guilds where: bot is present AND user has ADMINISTRATOR or MANAGE_GUILD
         bot_guild_ids = {str(g.id) for g in client.guilds}
-        user_guilds = [g for g in all_guilds if g['id'] in bot_guild_ids]
+        ADMIN_PERMS = 0x8 | 0x20   # ADMINISTRATOR | MANAGE_GUILD
+        user_guilds = [
+            g for g in all_guilds
+            if g['id'] in bot_guild_ids
+            and (g.get('owner') or (int(g.get('permissions', 0)) & ADMIN_PERMS) != 0)
+        ]
         flask_session['discord_user'] = user
         flask_session['discord_guilds'] = user_guilds
         flask_session['logged_in'] = True
-        flask_session['current_guild_id'] = user_guilds[0]['id'] if len(user_guilds) == 1 else ''
-        return redirect('/select-server' if len(user_guilds) != 1 else '/')
+        flask_session['current_guild_id'] = ''   # always force guild selection
+        return redirect('/select-server')
     except Exception as e:
         import traceback
         log(f'Discord OAuth error: {e}\n{traceback.format_exc()}')
@@ -1018,7 +1023,28 @@ def service_worker():
 @require_auth
 def dashboard():
     guild_id = flask_session.get('current_guild_id', '')
+    login_method = flask_session.get('login_method', '')
+    # Discord login — must pick a guild first
+    if login_method != 'password' and not guild_id:
+        guilds = flask_session.get('discord_guilds', [])
+        if not guilds:
+            return redirect('/no-bot')    # bot not in any of their servers
+        return redirect('/select-server')
     return render_template('dashboard.html', current_guild_id=guild_id)
+
+@flask_app.route('/no-bot')
+def no_bot():
+    if not flask_session.get('logged_in'):
+        return redirect('/login')
+    user = flask_session.get('discord_user', {})
+    username = user.get('global_name') or user.get('username', 'User')
+    uid = user.get('id', '')
+    avatar = user.get('avatar', '')
+    avatar_html = (f'<img src="https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" alt="">'
+                   if avatar else (username[0].upper() if username else '?'))
+    invite_url = '/invite'
+    return render_template('no_bot.html', username=username, avatar_html=avatar_html,
+                           invite_url=invite_url)
 
 @flask_app.route('/profile/<uid>')
 @require_auth
