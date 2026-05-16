@@ -45,8 +45,9 @@ DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')
 DASHBOARD_BASE_URL   = os.environ.get('DASHBOARD_BASE_URL', 'https://ajarnbot.up.railway.app')
 # OWNER_IDS: comma-separated Discord user IDs who have full access (global config)
 OWNER_IDS = {uid.strip() for uid in os.environ.get('OWNER_IDS', '').split(',') if uid.strip()}
-GOOGLE_SHEET_ID          = os.environ.get('GOOGLE_SHEET_ID', '')
+GOOGLE_SHEET_ID           = os.environ.get('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get('GOOGLE_SHEETS_CREDENTIALS', '')  # JSON string
+SHEETS_OWNER_EMAIL        = os.environ.get('SHEETS_OWNER_EMAIL', '')  # Gmail to share sheet with
 
 # ===== Startup config validation =====
 _FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
@@ -2314,7 +2315,26 @@ def sync_to_sheets(target_guild_id=None):
             _sheets_last_err = err
             return {'ok': False, 'error': err}
         try:
-            ss = gc.open_by_key(GOOGLE_SHEET_ID)
+            import gspread as _gspread_mod
+            # Open existing sheet or create new one if not found / ID missing
+            ss = None
+            created_new = False
+            if GOOGLE_SHEET_ID:
+                try:
+                    ss = gc.open_by_key(GOOGLE_SHEET_ID)
+                except Exception:
+                    ss = None
+            if ss is None:
+                ss = gc.create('AjarnBot Analytics')
+                created_new = True
+                log(f'sheets: created new spreadsheet id={ss.id}')
+
+            # Auto-share with owner email (writer so they can see + Looker Studio)
+            if SHEETS_OWNER_EMAIL:
+                try:
+                    ss.share(SHEETS_OWNER_EMAIL, perm_type='user', role='writer', notify=created_new)
+                except Exception:
+                    pass  # Already shared — ignore
 
             if target_guild_id:
                 guild_ids = [str(target_guild_id)]
@@ -2525,6 +2545,24 @@ def api_sheets_status():
         'sheet_url':   sheet_url,
         'last_sync':   _sheets_last_sync,
         'last_error':  _sheets_last_err,
+    })
+
+@flask_app.route('/api/sheets/info')
+@require_auth
+def api_sheets_info():
+    """Return service account email + real spreadsheet ID (useful for sharing)."""
+    sa_email = ''
+    if GOOGLE_SHEETS_CREDENTIALS:
+        try:
+            import json as _json
+            creds_dict = _json.loads(GOOGLE_SHEETS_CREDENTIALS)
+            sa_email = creds_dict.get('client_email', '')
+        except Exception:
+            pass
+    return jsonify({
+        'service_account_email': sa_email,
+        'sheet_id': GOOGLE_SHEET_ID,
+        'sheets_owner_email': SHEETS_OWNER_EMAIL,
     })
 
 @flask_app.route('/api/sheets/sync', methods=['POST'])
