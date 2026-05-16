@@ -1189,30 +1189,109 @@ async def on_guild_join(guild: discord.Guild):
         log(f'on_guild_join: failed to send welcome to {guild.name}: {e}')
 # ─────────────────────────────────────────────────────────────────────────────
 
-@client.tree.command(name="rank", description="แสดงอันดับ Voice")
-@app_commands.describe(period="ช่วงเวลา: today / week / month")
+# ===== Slash Command UI Helpers =====
+PERIOD_LABELS = {"today": "วันนี้", "week": "สัปดาห์นี้", "month": "เดือนนี้"}
+PERIOD_EMOJIS = {"today": "📅", "week": "📆", "month": "🗓️"}
+CMD_COLORS = {
+    "rank":     0x5865F2,
+    "stats":    0x23A559,
+    "compare":  0xF0B132,
+    "timeline": 0x00B8D4,
+    "trivia":   0xE67E22,
+    "help":     0x5865F2,
+    "error":    0xED4245,
+}
+
+def _bar(val: int, total: int, width: int = 12) -> str:
+    """Unicode progress bar: ██████░░░░░░"""
+    if total <= 0:
+        return '░' * width
+    pct = min(val / total, 1.0)
+    filled = round(pct * width)
+    return '█' * filled + '░' * (width - filled)
+
+def _footer(embed: discord.Embed) -> discord.Embed:
+    embed.set_footer(text=f"AjarnBot  •  {datetime.now(THAI_TZ).strftime('%d/%m %H:%M')}")
+    return embed
+
+def _error_embed(msg: str) -> discord.Embed:
+    e = discord.Embed(description=f"❌  {msg}", color=CMD_COLORS["error"])
+    return _footer(e)
+
+def _cooldown_embed(retry_after: float) -> discord.Embed:
+    e = discord.Embed(description=f"⏳  รออีก **{retry_after:.0f} วินาที**", color=0x949BA4)
+    return _footer(e)
+
+
+class PeriodView(discord.ui.View):
+    """3 period buttons that re-run a command function and edit the original message."""
+
+    def __init__(self, fn, current: str, **kwargs):
+        super().__init__(timeout=120)
+        self._fn = fn
+        self._kwargs = kwargs
+        for value, label in [("today", "📅 วันนี้"), ("week", "📆 สัปดาห์"), ("month", "🗓️ เดือน")]:
+            btn = discord.ui.Button(
+                label=label,
+                style=discord.ButtonStyle.primary if value == current else discord.ButtonStyle.secondary,
+                custom_id=value,
+            )
+            btn.callback = self._make_callback(value)
+            self.add_item(btn)
+
+    def _make_callback(self, period: str):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            embed, view = await self._fn(interaction, period, **self._kwargs)
+            await interaction.edit_original_response(embed=embed, view=view)
+        return callback
+# =======================================
+
+
+async def _build_rank_embed(interaction: discord.Interaction, period: str):
+    guild_id = str(interaction.guild_id) if interaction.guild_id else None
+    combined = get_stats_for_period(period, guild_id=guild_id)
+    label    = PERIOD_LABELS.get(period, "สัปดาห์นี้")
+    emoji    = PERIOD_EMOJIS.get(period, "📆")
+
+    embed = discord.Embed(
+        title=f"🏆  Voice Leaderboard — {label}",
+        color=CMD_COLORS["rank"],
+    )
+
+    if not combined:
+        embed.description = "ยังไม่มีข้อมูล Voice ในช่วงนี้"
+        return _footer(embed), PeriodView(_build_rank_embed, period)
+
+    sorted_stats = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)[:10]
+    top_sec      = sorted_stats[0][1]['seconds'] if sorted_stats else 1
+    medals       = ['🥇', '🥈', '🥉']
+
+    rows = []
+    for i, (uid, data) in enumerate(sorted_stats):
+        prefix = medals[i] if i < 3 else f'`{i+1}.`'
+        bar    = _bar(data['seconds'], top_sec, 10)
+        rows.append(f"{prefix} **{data['name']}**\n`{bar}` {format_duration(data['seconds'])}")
+
+    embed.description = "\n\n".join(rows)
+    embed.set_footer(
+        text=f"AjarnBot  •  {datetime.now(THAI_TZ).strftime('%d/%m %H:%M')}  •  {len(sorted_stats)} คน"
+    )
+    return embed, PeriodView(_build_rank_embed, period)
+
+
+@client.tree.command(name="rank", description="อันดับ Voice ของ server")
+@app_commands.describe(period="ช่วงเวลา")
 @app_commands.choices(period=[
-    app_commands.Choice(name="วันนี้", value="today"),
-    app_commands.Choice(name="สัปดาห์นี้", value="week"),
-    app_commands.Choice(name="เดือนนี้", value="month"),
+    app_commands.Choice(name="📅 วันนี้",     value="today"),
+    app_commands.Choice(name="📆 สัปดาห์นี้", value="week"),
+    app_commands.Choice(name="🗓️ เดือนนี้",  value="month"),
 ])
 @app_commands.checks.cooldown(1, 30.0)
 async def slash_rank(interaction: discord.Interaction, period: str = "week"):
     await interaction.response.defer()
-    guild_id = str(interaction.guild_id) if interaction.guild_id else None
-    combined = get_stats_for_period(period, guild_id=guild_id)
-    period_label = {"today": "วันนี้", "week": "สัปดาห์นี้", "month": "เดือนนี้"}.get(period, "สัปดาห์นี้")
-    if not combined:
-        await interaction.followup.send(f'ยังไม่มีข้อมูล Voice ({period_label})')
-        return
-    sorted_stats = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
-    medals = ['🥇', '🥈', '🥉']
-    lines = [f'--- อันดับ Voice {period_label} ---']
-    for i, (uid, data) in enumerate(sorted_stats[:10]):
-        prefix = medals[i] if i < 3 else f'{i+1}.'
-        lines.append(f'{prefix} {data["name"]}  {format_duration(data["seconds"])}')
-    lines.append('------------------------------')
-    await interaction.followup.send('\n'.join(lines))
+    embed, view = await _build_rank_embed(interaction, period)
+    await interaction.followup.send(embed=embed, view=view)
 
 @client.tree.command(name="joke", description="รับมุขสุ่ม")
 @app_commands.checks.cooldown(1, 15.0)
@@ -1237,143 +1316,235 @@ async def slash_trivia(interaction: discord.Interaction):
 
 @client.tree.command(name="trivia-rank", description="อันดับคะแนน Trivia")
 async def slash_trivia_rank(interaction: discord.Interaction):
-    gid = str(interaction.guild_id) if interaction.guild_id else 'dm'
+    gid    = str(interaction.guild_id) if interaction.guild_id else 'dm'
     scores = trivia_scores.get(gid, {})
+    embed  = discord.Embed(title="🧠  Trivia Leaderboard", color=CMD_COLORS["trivia"])
+
     if not scores:
-        await interaction.response.send_message('ยังไม่มีคะแนน Trivia ในเซิร์ฟเวอร์นี้')
+        embed.description = "ยังไม่มีคะแนน Trivia ในเซิร์ฟเวอร์นี้"
+        _footer(embed)
+        await interaction.response.send_message(embed=embed)
         return
-    sorted_scores = sorted(scores.items(), key=lambda x: x[1]['score'], reverse=True)
+
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1]['score'], reverse=True)[:10]
     medals = ['🥇', '🥈', '🥉']
-    lines = ['--- อันดับ Trivia ---']
-    for i, (uid, data) in enumerate(sorted_scores[:10]):
-        prefix = medals[i] if i < 3 else f'{i+1}.'
-        lines.append(f'{prefix} {data["name"]}  {data["score"]} คะแนน')
-    lines.append('--------------------')
-    await interaction.response.send_message('\n'.join(lines))
+    top_score = sorted_scores[0][1]['score'] if sorted_scores else 1
+
+    rows = []
+    for i, (uid, data) in enumerate(sorted_scores):
+        prefix = medals[i] if i < 3 else f'`{i+1}.`'
+        bar    = _bar(data['score'], top_score, 8)
+        rows.append(f"{prefix} **{data['name']}**  `{bar}`  **{data['score']}** คะแนน")
+
+    embed.description = "\n".join(rows)
+    _footer(embed)
+    await interaction.response.send_message(embed=embed)
 
 # ── Feature 1: /stats — ดูสถิติ Voice ของตัวเอง ─────────────────────────────
-@client.tree.command(name="stats", description="ดูเวลา Voice ของตัวเอง")
-@app_commands.describe(period="ช่วงเวลา: today / week / month")
-@app_commands.choices(period=[
-    app_commands.Choice(name="วันนี้",     value="today"),
-    app_commands.Choice(name="สัปดาห์นี้", value="week"),
-    app_commands.Choice(name="เดือนนี้",  value="month"),
-])
-@app_commands.checks.cooldown(1, 15.0)
-async def slash_stats(interaction: discord.Interaction, period: str = "week"):
-    await interaction.response.defer(ephemeral=True)
-    gid = str(interaction.guild_id) if interaction.guild_id else None
-    uid = str(interaction.user.id)
+async def _build_stats_embed(interaction: discord.Interaction, period: str):
+    gid  = str(interaction.guild_id) if interaction.guild_id else None
+    uid  = str(interaction.user.id)
+    label = PERIOD_LABELS.get(period, "สัปดาห์นี้")
+
     combined = get_stats_for_period(period, guild_id=gid)
-    period_label = {"today": "วันนี้", "week": "สัปดาห์นี้", "month": "เดือนนี้"}.get(period, "สัปดาห์นี้")
     user_data = combined.get(uid)
+
+    embed = discord.Embed(
+        title=f"📊  สถิติ Voice ของ {interaction.user.display_name}",
+        color=CMD_COLORS["stats"],
+    )
+    # Avatar thumbnail
+    if interaction.user.display_avatar:
+        embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
     if not user_data:
-        await interaction.followup.send(f'ยังไม่มีข้อมูล Voice ของคุณ ({period_label})', ephemeral=True)
-        return
-    # คำนวณอันดับ
-    sorted_all = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
-    rank = next((i + 1 for i, (k, _) in enumerate(sorted_all) if k == uid), None)
-    total_server_sec = sum(v['seconds'] for v in combined.values())
-    pct = (user_data['seconds'] / total_server_sec * 100) if total_server_sec else 0
-    lines = [
-        f'**สถิติ Voice ของ {interaction.user.display_name} — {period_label}**',
-        f'เวลารวม: **{format_duration(user_data["seconds"])}**',
-        f'อันดับ: **#{rank}** จาก {len(combined)} คน',
-        f'สัดส่วน server: **{pct:.1f}%**',
-    ]
-    # Feature 4: streak
-    ud = (user_daily.get(gid) or {}).get(uid, {})
+        embed.description = f"ยังไม่มีข้อมูล Voice ช่วง **{label}**"
+        return _footer(embed), PeriodView(_build_stats_embed, period)
+
+    sorted_all    = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
+    rank          = next((i + 1 for i, (k, _) in enumerate(sorted_all) if k == uid), None)
+    total_srv_sec = sum(v['seconds'] for v in combined.values())
+    pct           = (user_data['seconds'] / total_srv_sec * 100) if total_srv_sec else 0
+    bar           = _bar(user_data['seconds'], total_srv_sec)
+
+    embed.add_field(
+        name=f"{PERIOD_EMOJIS.get(period,'📆')}  {label}",
+        value=f"**{format_duration(user_data['seconds'])}**\n`{bar}` {pct:.1f}% ของ server",
+        inline=True,
+    )
+    embed.add_field(
+        name="🏅  อันดับ",
+        value=f"**#{rank}** / {len(combined)} คน",
+        inline=True,
+    )
+
+    ud     = (user_daily.get(gid) or {}).get(uid, {})
     streak = compute_streak(ud.get('dates', {}))
-    if streak > 0:
-        lines.append(f'Streak: **{streak} วัน** {"🔥" * min(streak, 5)}')
-    # แสดง live session ถ้ากำลังอยู่ใน voice
+    alltime = ud.get('alltime_seconds', 0)
+
+    embed.add_field(
+        name="🔥  Streak",
+        value=f"**{streak} วัน**" + ("  " + "🔥" * min(streak, 5) if streak > 0 else ""),
+        inline=True,
+    )
+    embed.add_field(
+        name="⏱️  รวมทั้งหมด",
+        value=f"**{format_duration(alltime)}**",
+        inline=True,
+    )
+    embed.add_field(
+        name="🗓️  Sessions",
+        value=f"**{ud.get('session_count', 0)}**",
+        inline=True,
+    )
+    embed.add_field(
+        name="📅  ครั้งล่าสุด",
+        value=ud.get('last_seen', '-') or '-',
+        inline=True,
+    )
+
+    # Live session
     live_key = (interaction.guild_id, interaction.user.id) if interaction.guild_id else None
     if live_key and live_key in voice_join_times:
         _, join_t, ch_name = voice_join_times[live_key]
         elapsed = int((datetime.now(THAI_TZ) - join_t).total_seconds())
-        lines.append(f'กำลังอยู่ใน **{ch_name}** — {format_duration(elapsed)} (session ปัจจุบัน)')
-    await interaction.followup.send('\n'.join(lines), ephemeral=True)
+        embed.add_field(
+            name="🔴  กำลังอยู่ใน Voice",
+            value=f"**{ch_name}** — {format_duration(elapsed)}",
+            inline=False,
+        )
+
+    embed.set_footer(
+        text=f"AjarnBot  •  {datetime.now(THAI_TZ).strftime('%d/%m %H:%M')}  •  ดูเพิ่มเติม: {DASHBOARD_BASE_URL}/profile/{uid}"
+    )
+    return embed, PeriodView(_build_stats_embed, period)
+
+
+@client.tree.command(name="stats", description="ดูเวลา Voice ของตัวเอง")
+@app_commands.describe(period="ช่วงเวลา")
+@app_commands.choices(period=[
+    app_commands.Choice(name="📅 วันนี้",     value="today"),
+    app_commands.Choice(name="📆 สัปดาห์นี้", value="week"),
+    app_commands.Choice(name="🗓️ เดือนนี้",  value="month"),
+])
+@app_commands.checks.cooldown(1, 15.0)
+async def slash_stats(interaction: discord.Interaction, period: str = "week"):
+    await interaction.response.defer(ephemeral=True)
+    embed, view = await _build_stats_embed(interaction, period)
+    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Feature 1: /help ──────────────────────────────────────────────────────────
 @client.tree.command(name="help", description="แสดงคำสั่งทั้งหมดของ bot")
 async def slash_help(interaction: discord.Interaction):
-    lines = [
-        '**AjarnBot — คำสั่งทั้งหมด**',
-        '',
-        '`/rank [period]` — อันดับ Voice ของ server (today/week/month)',
-        '`/stats [period]` — สถิติ Voice ของตัวเอง (ephemeral)',
-        '`/compare @user [period]` — เปรียบสถิติกับคนอื่น',
-        '`/timeline [@user] [date]` — ดู Voice timeline รายชั่วโมงของวัน',
-        '`/joke` — รับมุขสุ่ม',
-        '`/trivia` — รับคำถาม Trivia',
-        '`/trivia-rank` — อันดับคะแนน Trivia',
-        '',
-        f'Dashboard: {DASHBOARD_BASE_URL}',
-    ]
-    await interaction.response.send_message('\n'.join(lines), ephemeral=True)
+    embed = discord.Embed(
+        title="🤖  AjarnBot — คำสั่งทั้งหมด",
+        description="bot สำหรับ track กิจกรรม Voice Channel",
+        color=CMD_COLORS["help"],
+    )
+    embed.add_field(
+        name="📊  Voice Stats",
+        value=(
+            "`/rank [ช่วงเวลา]` — อันดับ Voice ของ server\n"
+            "`/stats [ช่วงเวลา]` — สถิติ Voice ส่วนตัว\n"
+            "`/compare @user [ช่วงเวลา]` — เปรียบสถิติกับคนอื่น\n"
+            "`/timeline [@user] [วันที่]` — ดู Voice timeline รายชั่วโมง"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="🎮  Entertainment",
+        value=(
+            "`/joke` — รับมุขสุ่ม (พร้อมโหวต 👍👎)\n"
+            "`/trivia` — รับคำถามแบบทดสอบ (30 วินาที)\n"
+            "`/trivia-rank` — อันดับคะแนน Trivia"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="💡  เคล็ดลับ",
+        value=(
+            "• `/rank` และ `/stats` มีปุ่มสลับช่วงเวลาได้เลย ไม่ต้องพิมพ์ใหม่\n"
+            "• `/stats` แสดงแค่คุณเห็น (ephemeral)\n"
+            f"• [เปิด Dashboard]({DASHBOARD_BASE_URL}) — ดูกราฟ, heatmap, leaderboard เต็ม"
+        ),
+        inline=False,
+    )
+    if interaction.guild and interaction.guild.icon:
+        embed.set_thumbnail(url=interaction.guild.icon.url)
+    _footer(embed)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Feature 2: /compare @user ────────────────────────────────────────────────
 @client.tree.command(name="compare", description="เปรียบ Voice stats กับสมาชิกอื่น")
 @app_commands.describe(
     member="สมาชิกที่อยากเปรียบ",
-    period="ช่วงเวลา: today / week / month",
+    period="ช่วงเวลา",
 )
 @app_commands.choices(period=[
-    app_commands.Choice(name="วันนี้",     value="today"),
-    app_commands.Choice(name="สัปดาห์นี้", value="week"),
-    app_commands.Choice(name="เดือนนี้",  value="month"),
+    app_commands.Choice(name="📅 วันนี้",     value="today"),
+    app_commands.Choice(name="📆 สัปดาห์นี้", value="week"),
+    app_commands.Choice(name="🗓️ เดือนนี้",  value="month"),
 ])
 @app_commands.checks.cooldown(1, 15.0)
 async def slash_compare(interaction: discord.Interaction,
                         member: discord.Member,
                         period: str = "week"):
     await interaction.response.defer()
-    gid  = str(interaction.guild_id) if interaction.guild_id else None
-    me   = str(interaction.user.id)
-    them = str(member.id)
-    period_label = {"today": "วันนี้", "week": "สัปดาห์นี้", "month": "เดือนนี้"}.get(period, "สัปดาห์นี้")
+    gid   = str(interaction.guild_id) if interaction.guild_id else None
+    me_id = str(interaction.user.id)
+    th_id = str(member.id)
+    label = PERIOD_LABELS.get(period, "สัปดาห์นี้")
 
-    if me == them:
-        await interaction.followup.send('เปรียบกับตัวเองไม่ได้นะ', ephemeral=True)
+    if me_id == th_id:
+        await interaction.followup.send(embed=_error_embed("ไม่สามารถเปรียบกับตัวเองได้"), ephemeral=True)
         return
 
-    combined = get_stats_for_period(period, guild_id=gid)
+    combined   = get_stats_for_period(period, guild_id=gid)
     sorted_all = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
-    rank_map = {uid: i + 1 for i, (uid, _) in enumerate(sorted_all)}
+    rank_map   = {uid: i + 1 for i, (uid, _) in enumerate(sorted_all)}
 
-    def user_line(uid, display):
-        d = combined.get(uid)
-        if not d:
-            return f'**{display}**: ไม่มีข้อมูล ({period_label})'
-        r = rank_map.get(uid, '?')
-        ud = (user_daily.get(gid) or {}).get(uid, {})
-        streak = compute_streak(ud.get('dates', {}))
-        streak_txt = f'  🔥{streak}d' if streak > 0 else ''
-        return f'**{display}**: {format_duration(d["seconds"])}  |  อันดับ #{r}{streak_txt}'
+    me_sec = (combined.get(me_id) or {}).get('seconds', 0)
+    th_sec = (combined.get(th_id) or {}).get('seconds', 0)
+    total  = me_sec + th_sec or 1
 
-    me_line   = user_line(me,   interaction.user.display_name)
-    them_line = user_line(them, member.display_name)
+    me_ud = (user_daily.get(gid) or {}).get(me_id, {})
+    th_ud = (user_daily.get(gid) or {}).get(th_id, {})
 
-    # เปรียบเวลา
-    me_sec   = (combined.get(me)   or {}).get('seconds', 0)
-    them_sec = (combined.get(them) or {}).get('seconds', 0)
-    diff = abs(me_sec - them_sec)
-    if me_sec > them_sec:
-        verdict = f'{interaction.user.display_name} นำอยู่ {format_duration(diff)}'
-    elif them_sec > me_sec:
-        verdict = f'{member.display_name} นำอยู่ {format_duration(diff)}'
+    embed = discord.Embed(
+        title=f"⚔️  เปรียบ Voice — {label}",
+        color=CMD_COLORS["compare"],
+    )
+    embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+    def _user_field(uid, display, sec, ud):
+        r    = rank_map.get(uid, '?')
+        bar  = _bar(sec, total, 12)
+        strk = compute_streak(ud.get('dates', {}))
+        val  = f"`{bar}`\n**{format_duration(sec)}** · อันดับ #{r}"
+        if strk:
+            val += f" · 🔥{strk}d"
+        return display, val
+
+    me_name,  me_val  = _user_field(me_id, interaction.user.display_name, me_sec, me_ud)
+    them_name, th_val = _user_field(th_id, member.display_name,            th_sec, th_ud)
+
+    embed.add_field(name=f"👤 {me_name}",   value=me_val,  inline=True)
+    embed.add_field(name="​",           value="​",inline=True)   # spacer
+    embed.add_field(name=f"👤 {them_name}", value=th_val,  inline=True)
+
+    diff = abs(me_sec - th_sec)
+    if me_sec > th_sec:
+        verdict = f"🟢  **{interaction.user.display_name}** นำอยู่ {format_duration(diff)}"
+    elif th_sec > me_sec:
+        verdict = f"🟢  **{member.display_name}** นำอยู่ {format_duration(diff)}"
     else:
-        verdict = 'เท่ากันพอดี!'
+        verdict = "🤝  เท่ากันพอดี!"
 
-    lines = [
-        f'**เปรียบ Voice — {period_label}**',
-        me_line,
-        them_line,
-        f'→ {verdict}',
-    ]
-    await interaction.followup.send('\n'.join(lines))
+    embed.add_field(name="ผลลัพธ์", value=verdict, inline=False)
+    _footer(embed)
+    await interaction.followup.send(embed=embed)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── /timeline ────────────────────────────────────────────────────────────────
@@ -1421,24 +1592,62 @@ async def slash_timeline(interaction: discord.Interaction,
     if live_info:
         total_sec += live_info[2]
 
+    embed = discord.Embed(
+        title=f"🕐  Voice Timeline — {target.display_name}",
+        color=CMD_COLORS["timeline"],
+    )
+    if target.display_avatar:
+        embed.set_thumbnail(url=target.display_avatar.url)
+
     if not day_sessions and not live_info:
-        await interaction.followup.send(
-            f'ไม่มีข้อมูล Voice ของ **{target.display_name}** ในวันที่ {date_str}', ephemeral=True)
+        embed.description = f"ไม่มีข้อมูล Voice ในวันที่ **{date_str}**"
+        _footer(embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    lines = [f'**Voice Timeline — {target.display_name}** ({date_str})']
-    for i, s in enumerate(day_sessions, 1):
-        leave = s.get('leave', '') or '—'
-        lines.append(f'`{i}.` **{s.get("channel","?")}** | {s["join"][11:16]} → {leave[11:16] if leave != "—" else "—"} | {format_duration(s.get("seconds",0))}')
+    session_count = len(day_sessions) + (1 if live_info else 0)
+
+    # Build ASCII 24h bar (each char = 1 hour)
+    hour_map = ['░'] * 24
+    for s in day_sessions:
+        try:
+            jh = int(s.get('join', '00:00 ').split(' ')[1].split(':')[0])
+            dur_h = max(1, round(s.get('seconds', 0) / 3600))
+            for h in range(jh, min(jh + dur_h, 24)):
+                hour_map[h] = '█'
+        except Exception:
+            pass
     if live_info:
-        ch, jt, elapsed = live_info
-        lines.append(f'`🔴` **{ch}** | {jt.strftime("%H:%M")} → ตอนนี้ | {format_duration(elapsed)} (live)')
+        _, jt_live, _ = live_info
+        for h in range(jt_live.hour, 24):
+            hour_map[h] = '▓'
 
-    lines.append(f'\n**รวม: {format_duration(total_sec)}** | {len(day_sessions) + (1 if live_info else 0)} sessions')
-    if total_sec > 0:
-        lines.append(f'Dashboard: {DASHBOARD_BASE_URL}/profile/{uid}')
+    ascii_bar = '`00 ' + ''.join(hour_map) + ' 24`'
+    embed.description = (
+        f"📅 **{date_str}**  ·  ⏱️ รวม **{format_duration(total_sec)}**  ·  {session_count} sessions\n"
+        f"{ascii_bar}\n`{''.join(str(h//10) if h%6==0 else ' ' for h in range(24))}`"
+    )
 
-    await interaction.followup.send('\n'.join(lines), ephemeral=True)
+    session_rows = []
+    for i, s in enumerate(day_sessions, 1):
+        leave_t = s.get('leave', '')
+        leave_str = leave_t[11:16] if leave_t else '—'
+        session_rows.append(
+            f"`{i}.` **#{s.get('channel','?')}**  {s['join'][11:16]} → {leave_str}  `{format_duration(s.get('seconds',0))}`"
+        )
+    if live_info:
+        ch, jt_live, elapsed = live_info
+        session_rows.append(
+            f"`🔴` **#{ch}**  {jt_live.strftime('%H:%M')} → ตอนนี้  `{format_duration(elapsed)}`  *(live)*"
+        )
+
+    if session_rows:
+        embed.add_field(name="Sessions", value="\n".join(session_rows), inline=False)
+
+    embed.set_footer(
+        text=f"AjarnBot  •  {datetime.now(THAI_TZ).strftime('%d/%m %H:%M')}  •  {DASHBOARD_BASE_URL}/profile/{uid}"
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
 # ─────────────────────────────────────────────────────────────────────────────
 
 @slash_rank.error
@@ -1447,9 +1656,21 @@ async def slash_timeline(interaction: discord.Interaction,
 @slash_stats.error
 @slash_compare.error
 @slash_timeline.error
-async def on_slash_cooldown(interaction: discord.Interaction, error: app_commands.AppCommandError):
+@slash_trivia_rank.error
+async def on_slash_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
-        await interaction.response.send_message(f'⏳ รอ {error.retry_after:.0f} วินาทีก่อน', ephemeral=True)
+        try:
+            await interaction.response.send_message(
+                embed=_cooldown_embed(error.retry_after), ephemeral=True)
+        except discord.InteractionResponded:
+            await interaction.followup.send(
+                embed=_cooldown_embed(error.retry_after), ephemeral=True)
+    else:
+        try:
+            await interaction.response.send_message(
+                embed=_error_embed("เกิดข้อผิดพลาด กรุณาลองใหม่"), ephemeral=True)
+        except discord.InteractionResponded:
+            pass
 
 @client.event
 async def on_message(message):
