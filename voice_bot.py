@@ -49,6 +49,8 @@ OWNER_IDS = {uid.strip() for uid in os.environ.get('OWNER_IDS', '').split(',') i
 GOOGLE_SHEET_ID           = os.environ.get('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get('GOOGLE_SHEETS_CREDENTIALS', '')  # JSON string
 SHEETS_OWNER_EMAIL        = os.environ.get('SHEETS_OWNER_EMAIL', '')  # Gmail to share sheet with
+NOTION_TOKEN       = os.environ.get('NOTION_TOKEN', '')        # Notion Integration token
+NOTION_DATABASE_ID = os.environ.get('NOTION_DATABASE_ID', '')  # Notion Database ID
 
 # ===== Startup config validation =====
 _FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
@@ -2602,6 +2604,181 @@ def api_sheets_import():
     guild_id = str(data.get('guild_id') or flask_session.get('current_guild_id') or '').strip()
     result   = import_from_sheets(guild_id or None)
     return jsonify(result), (200 if result['ok'] else 500)
+
+# ── Notion Integration ───────────────────────────────────────────────────────
+_NOTION_API   = 'https://api.notion.com/v1'
+_NOTION_VER   = '2022-06-28'
+_notion_lock      = threading.Lock()
+_notion_last_sync: str | None = None
+_notion_last_err:  str | None = None
+
+# Required database property schema (name → type config sent to Notion)
+_NOTION_SCHEMA = {
+    'Discord ID':    {'rich_text': {}},
+    'Server':        {'select': {}},
+    'Weekly Minutes':{'number': {'format': 'number'}},
+    'Total Hours':   {'number': {'format': 'number'}},
+    'Streak (days)': {'number': {'format': 'number'}},
+    'Sessions':      {'number': {'format': 'number'}},
+    'Last Seen':     {'date': {}},
+}
+
+def _notion_req(method: str, path: str, body=None):
+    """Notion REST helper. Returns (parsed_json | None, error_str | None)."""
+    if not NOTION_TOKEN:
+        return None, 'NOTION_TOKEN not set'
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        f'{_NOTION_API}{path}', data=data, method=method,
+        headers={
+            'Authorization': f'Bearer {NOTION_TOKEN}',
+            'Notion-Version': _NOTION_VER,
+            'Content-Type': 'application/json',
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode()), None
+    except urllib.error.HTTPError as e:
+        return None, f'HTTP {e.code}: {e.read().decode()[:300]}'
+    except Exception as e:
+        return None, str(e)
+
+def _notion_ensure_schema() -> tuple[bool, str]:
+    """Patch the database to add any missing properties. Returns (ok, msg)."""
+    if not NOTION_DATABASE_ID:
+        return False, 'NOTION_DATABASE_ID not set'
+    result, err = _notion_req('PATCH', f'/databases/{NOTION_DATABASE_ID}',
+                              {'properties': _NOTION_SCHEMA})
+    if err:
+        return False, err
+    return True, 'Schema OK'
+
+def _notion_find_page(uid: str) -> str | None:
+    """Return page_id of existing row for this Discord uid, or None."""
+    result, _ = _notion_req('POST', f'/databases/{NOTION_DATABASE_ID}/query', {
+        'filter': {'property': 'Discord ID', 'rich_text': {'equals': uid}},
+        'page_size': 1,
+    })
+    if result and result.get('results'):
+        return result['results'][0]['id']
+    return None
+
+def _notion_props(name: str, uid: str, guild_name: str,
+                  weekly_min: int, total_hours: float,
+                  streak: int, sessions: int, last_seen: str) -> dict:
+    props: dict = {
+        'Name':          {'title': [{'text': {'content': name[:100]}}]},
+        'Discord ID':    {'rich_text': [{'text': {'content': uid}}]},
+        'Server':        {'select': {'name': (guild_name or 'Unknown')[:100]}},
+        'Weekly Minutes':{'number': weekly_min},
+        'Total Hours':   {'number': round(total_hours, 2)},
+        'Streak (days)': {'number': streak},
+        'Sessions':      {'number': sessions},
+    }
+    if last_seen:
+        try:
+            datetime.strptime(last_seen, '%Y-%m-%d')
+            props['Last Seen'] = {'date': {'start': last_seen}}
+        except ValueError:
+            pass
+    return props
+
+def sync_to_notion(target_guild_id: str | None = None) -> dict:
+    """Push voice stats to Notion database. Returns result dict."""
+    global _notion_last_sync, _notion_last_err
+    with _notion_lock:
+        if not NOTION_TOKEN or not NOTION_DATABASE_ID:
+            err = 'Notion not configured (NOTION_TOKEN / NOTION_DATABASE_ID missing)'
+            _notion_last_err = err
+            return {'ok': False, 'error': err}
+
+        # Ensure schema exists
+        ok, schema_msg = _notion_ensure_schema()
+        if not ok:
+            _notion_last_err = schema_msg
+            return {'ok': False, 'error': schema_msg}
+
+        created = updated = errors = 0
+
+        with _lock_stats:
+            stats_snap = {k: dict(v) for k, v in weekly_stats.items()}
+        with _lock_user_daily:
+            daily_snap = {k: dict(v) for k, v in user_daily.items()}
+
+        guild_ids = [target_guild_id] if target_guild_id else list(
+            set(stats_snap.keys()) | set(daily_snap.keys()))
+
+        for gid in guild_ids:
+            guild_obj  = client.get_guild(int(gid)) if gid else None
+            guild_name = guild_obj.name if guild_obj else str(gid)
+            guild_w    = stats_snap.get(str(gid), {})
+            guild_d    = daily_snap.get(str(gid), {})
+            all_uids   = set(guild_w.keys()) | set(guild_d.keys())
+
+            for uid in all_uids:
+                w = guild_w.get(uid, {})
+                d = guild_d.get(uid, {})
+                name        = (w.get('name') or d.get('name') or uid)[:100]
+                weekly_min  = w.get('seconds', 0) // 60
+                total_hrs   = d.get('alltime_seconds', 0) / 3600
+                streak      = d.get('streak', 0)
+                sessions    = d.get('session_count', 0)
+                last_seen   = d.get('last_seen', '')
+
+                props    = _notion_props(name, uid, guild_name, weekly_min,
+                                         total_hrs, streak, sessions, last_seen)
+                page_id  = _notion_find_page(uid)
+                if page_id:
+                    _, err = _notion_req('PATCH', f'/pages/{page_id}', {'properties': props})
+                else:
+                    _, err = _notion_req('POST', '/pages', {
+                        'parent': {'database_id': NOTION_DATABASE_ID},
+                        'properties': props,
+                    })
+                if err:
+                    errors += 1
+                    _notion_last_err = err
+                    log(f'notion: error for uid={uid}: {err}')
+                elif page_id:
+                    updated += 1
+                else:
+                    created += 1
+
+        now_str = datetime.now(THAI_TZ).strftime('%Y-%m-%d %H:%M')
+        _notion_last_sync = now_str
+        if errors == 0:
+            _notion_last_err = None
+        rows = created + updated
+        return {'ok': errors == 0, 'created': created, 'updated': updated,
+                'errors': errors, 'rows': rows, 'synced_at': now_str}
+
+@flask_app.route('/api/notion/status')
+@require_auth
+def api_notion_status():
+    return jsonify({
+        'configured':  bool(NOTION_TOKEN and NOTION_DATABASE_ID),
+        'database_id': (NOTION_DATABASE_ID[:8] + '...') if NOTION_DATABASE_ID else '',
+        'last_sync':   _notion_last_sync,
+        'last_error':  _notion_last_err,
+    })
+
+@flask_app.route('/api/notion/sync', methods=['POST'])
+@require_auth
+def api_notion_sync():
+    data     = request.get_json(silent=True) or {}
+    guild_id = str(data.get('guild_id') or flask_session.get('current_guild_id') or '').strip()
+    result   = sync_to_notion(guild_id or None)
+    return jsonify(result), (200 if result['ok'] else 500)
+
+@flask_app.route('/api/notion/setup', methods=['POST'])
+@require_auth
+def api_notion_setup():
+    """Patch database schema to add required properties."""
+    ok, msg = _notion_ensure_schema()
+    return jsonify({'ok': ok, 'message': msg}), (200 if ok else 500)
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 # ── Feature 6: Export CSV ────────────────────────────────────────────────────
 @flask_app.route('/api/export/csv')

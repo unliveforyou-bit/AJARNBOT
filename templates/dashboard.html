@@ -49,7 +49,7 @@
       <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
       <li><a href="#ct-inactive-section"><i class="ph-bold ph-user-minus" aria-hidden="true"></i> Inactive Users</a></li>
       <li><a href="#ct-histogram-section"><i class="ph-bold ph-chart-bar-horizontal" aria-hidden="true"></i> Session Length</a></li>
-      <li><a href="#ct-sheets-section"><i class="ph-bold ph-file-xls" aria-hidden="true"></i> Google Sheets</a></li>
+      <li><a href="#ct-notion-section"><i class="ph-bold ph-notion-logo" aria-hidden="true"></i> Notion Sync</a></li>
       <li><a href="#ct-members-section"><i class="ph-bold ph-users" aria-hidden="true"></i> สมาชิกทั้งหมด</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
       <li><a href="#ct-channel-section"><i class="ph-bold ph-speaker-high" aria-hidden="true"></i> Channel Activity</a></li>
@@ -463,38 +463,40 @@
       </div>
     </section>
 
-    <!-- 12. Google Sheets -->
-    <section class="card" id="ct-sheets-section" aria-labelledby="ct-sheets">
+    <!-- 12. Notion Sync -->
+    <section class="card" id="ct-notion-section" aria-labelledby="ct-notion">
       <div class="card-header">
-        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-file-xls"></i></div>
-        <h2 class="card-title" id="ct-sheets">Google Sheets Sync</h2>
+        <div class="card-icon" style="background:#191919" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.14c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/></svg>
+        </div>
+        <h2 class="card-title" id="ct-notion">Notion Sync</h2>
         <div style="display:flex;gap:6px;margin-left:auto">
-          <button class="btn btn-secondary" style="height:30px;padding:0 12px;font-size:12px" onclick="importFromSheets(this)" title="อ่าน Notes จาก Sheet → Bot"><i class="ph-bold ph-arrow-square-in" aria-hidden="true"></i> Import Notes</button>
-          <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px" onclick="syncToSheets(this)"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Sync Now</button>
+          <button class="btn btn-secondary" style="height:30px;padding:0 12px;font-size:12px" onclick="notionSetup(this)" title="สร้าง/อัปเดต properties ใน Database"><i class="ph-bold ph-wrench" aria-hidden="true"></i> Setup DB</button>
+          <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px" onclick="syncToNotion(this)"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Sync Now</button>
         </div>
       </div>
       <div class="card-body" style="padding:16px">
-        <div id="sheetsStatus" class="sheets-status-wrap">
+        <div id="notionStatus">
           <span class="empty-msg">กำลังโหลด...</span>
         </div>
         <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
         <details class="looker-guide">
           <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--accent);user-select:none">
-            <i class="ph-bold ph-chart-pie-slice" aria-hidden="true"></i>
-            วิธีสร้าง Looker Studio Dashboard สวยๆ บน Sheet นี้
+            <i class="ph-bold ph-info" aria-hidden="true"></i>
+            วิธี Setup Notion Integration (ครั้งแรก)
           </summary>
           <div class="looker-steps">
             <div class="looker-step"><span class="looker-num">1</span>
-              <div>ไปที่ <a href="https://lookerstudio.google.com" target="_blank" rel="noopener" style="color:var(--accent)">lookerstudio.google.com</a> → Create → Report</div>
+              <div>ไปที่ <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener" style="color:var(--accent)">notion.so/my-integrations</a> → New Integration → ตั้งชื่อ เช่น "AjarnBot" → Submit → คัดลอก <b>Internal Integration Token</b></div>
             </div>
             <div class="looker-step"><span class="looker-num">2</span>
-              <div>เลือก <b>Google Sheets</b> เป็น Data Source → เลือก Spreadsheet → เลือก tab ที่ต้องการ (เช่น 🏆 Leaderboard)</div>
+              <div>สร้าง <b>Database</b> ใน Notion (full-page database) → คลิก <b>Share</b> → เพิ่ม Integration ที่สร้างไว้ → คัดลอก Database ID จาก URL (<code>notion.so/.../<b>DATABASE_ID</b>?v=...</code>)</div>
             </div>
             <div class="looker-step"><span class="looker-num">3</span>
-              <div>เพิ่ม chart: Bar chart (Top Members), Line chart (DAU trend), Scorecard (Total Hours) — ลากวางได้เลย</div>
+              <div>เพิ่ม Environment Variables ใน Railway:<br><code>NOTION_TOKEN=secret_xxx...</code><br><code>NOTION_DATABASE_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx</code></div>
             </div>
             <div class="looker-step"><span class="looker-num">4</span>
-              <div>Share link → ทุกคนดู Dashboard สวยๆ ได้โดยไม่ต้องล็อกอิน</div>
+              <div>กด <b>Setup DB</b> เพื่อสร้าง columns ที่จำเป็น → กด <b>Sync Now</b> เพื่อ push ข้อมูล</div>
             </div>
           </div>
         </details>
