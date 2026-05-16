@@ -381,6 +381,8 @@ async function loadContribGraph(){
     if(!users.length){container.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
 
     // 53-week Sunday-based grid (GitHub style)
+    // Use local date string to avoid UTC offset shifting dates by 1 day (UTC+7 issue)
+    function localISO(d){const yr=d.getFullYear(),mo=String(d.getMonth()+1).padStart(2,'0'),dy=String(d.getDate()).padStart(2,'0');return`${yr}-${mo}-${dy}`;}
     const today=new Date();today.setHours(0,0,0,0);
     const todayDow=today.getDay();
     const startDate=new Date(today);
@@ -389,7 +391,7 @@ async function loadContribGraph(){
     const allDates=[];
     for(let i=0;i<totalCells;i++){
       const d=new Date(startDate);d.setDate(startDate.getDate()+i);
-      allDates.push(d.toISOString().split('T')[0]);
+      allDates.push(localISO(d));
     }
 
     // Month labels: position at column where month changes

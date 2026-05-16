@@ -2872,11 +2872,17 @@ def api_dau():
         return jsonify({'error': 'invalid days'}), 400
     gid = str(guild_id)
     now  = datetime.now(THAI_TZ)
+    # Build DAU from user_daily (has full history) + daily_unique (new data)
+    # user_daily[gid][uid]['dates'][date_str] → count
+    gdata = user_daily.get(gid, {})
     result = []
     for i in range(days - 1, -1, -1):
         d = (now - timedelta(days=i)).strftime('%Y-%m-%d')
-        dau   = len(daily_unique.get(gid, {}).get(d, []))
-        joins = daily_activity.get(gid, {}).get(d, 0)
+        # Count unique users who have any activity on this date
+        dau_ud  = sum(1 for udata in gdata.values() if d in udata.get('dates', {}))
+        dau_du  = len(daily_unique.get(gid, {}).get(d, []))
+        dau     = max(dau_ud, dau_du)
+        joins   = daily_activity.get(gid, {}).get(d, 0)
         result.append({'date': d, 'dau': dau, 'joins': joins})
     return jsonify(result)
 
