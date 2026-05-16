@@ -8,7 +8,7 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 ![discord.py](https://img.shields.io/badge/discord.py-2.3+-5865F2?style=flat&logo=discord&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.0+-000000?style=flat&logo=flask&logoColor=white)
 ![Railway](https://img.shields.io/badge/Deploy-Railway-0B0D0E?style=flat&logo=railway&logoColor=white)
-![Version](https://img.shields.io/badge/Version-2.7.0-58a6ff?style=flat)
+![Version](https://img.shields.io/badge/Version-2.8.0-58a6ff?style=flat)
 ![Tests](https://img.shields.io/badge/Tests-93%20passed-3fb950?style=flat)
 
 ---
@@ -59,6 +59,7 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 - **Session History** — ล่าสุด 200 รายการ พร้อม live search filter
 - **Member Profile** — หน้าโปรไฟล์ส่วนตัวพร้อม stat boxes, peak hour chart, channel breakdown
 - **Export CSV** — ดาวน์โหลด session history เป็นไฟล์ CSV
+- **Notion Sync** — sync สถิติ member ทั้งหมดไปยัง Notion Database (upsert อัตโนมัติ)
 - **Dark / Light mode** toggle + PWA support
 - Log viewer แสดง bot log ล่าสุด 100 บรรทัด
 
@@ -72,7 +73,9 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 - **Discord OAuth2** — ทางหลัก ทุกคนใช้ Discord account login ได้
 - **Password fallback** — สำหรับ owner เท่านั้น (ตั้ง `DASHBOARD_PASSWORD`)
 - **API Key** support — `X-API-Key` header สำหรับ external/programmatic access
-- XSS protection — `escHTML()` ทุก user-controlled innerHTML
+- XSS protection — Jinja2 auto-escaping (ไม่ใช้ `| safe` บน user-controlled data)
+- CSRF token validation บน login form (Flask-WTF)
+- Atomic JSON writes — `tempfile` + `os.replace()` ป้องกัน file corruption
 - CSRF state validation บน OAuth2 flow
 - Rate limiting บน Discord commands (30 วินาที cooldown)
 
@@ -117,6 +120,8 @@ cd AJARNBOT
 | `DASHBOARD_PASSWORD` | ไม่บังคับ | Password emergency สำหรับ owner login โดยไม่ใช้ Discord |
 | `DASHBOARD_API_KEY` | ไม่บังคับ | API Key สำหรับ external access ผ่าน `X-API-Key` header |
 | `OUTBOUND_WEBHOOK_URL` | ไม่บังคับ | URL รับ event join/leave (n8n, Make ฯลฯ) — ต้องขึ้นต้นด้วย `https://` |
+| `NOTION_TOKEN` | ไม่บังคับ | Integration token จาก [Notion Integrations](https://www.notion.so/my-integrations) (สำหรับ Notion sync) |
+| `NOTION_DATABASE_ID` | ไม่บังคับ | Database ID ใน Notion ที่ share กับ integration |
 
 > **วิธีหา Discord User ID:** Discord Settings → Advanced → เปิด Developer Mode → คลิกขวาที่ชื่อตัวเอง → Copy User ID
 
@@ -218,6 +223,9 @@ AJARNBOT/
 | `POST /api/action/summary` | ✅ | ส่งสรุปสัปดาห์ทันที |
 | `POST /api/set-guild` | ✅ | สลับ guild ปัจจุบัน |
 | `GET /invite` | ❌ | Redirect ไป Discord bot invite URL |
+| `GET /api/notion/status` | ✅ | สถานะ Notion sync (configured / last sync / error) |
+| `POST /api/notion/sync` | ✅ | Sync สถิติ member ทั้งหมดไปยัง Notion Database (upsert) |
+| `POST /api/notion/setup` | ✅ | สร้าง/อัพเดท schema ใน Notion Database |
 
 **Auth:** Login ผ่าน `/login` (Discord OAuth2) หรือส่ง header `X-API-Key: <your-key>`
 
@@ -228,6 +236,7 @@ AJARNBOT/
 ```
 discord.py>=2.3.0
 flask>=3.0.0
+flask-wtf>=1.2.0
 tzdata>=2024.1
 ```
 
@@ -257,6 +266,28 @@ Python ถูกสร้างโดยใคร|Guido van Rossum
 ---
 
 ## 📋 Changelog
+
+### v2.8.0 — Notion Sync, Railway Volume & Bug Fixes
+> `HEAD` · 2026-05-16
+
+**🔗 Notion Sync**
+- **Notion Database sync** — `/api/notion/status`, `/api/notion/sync`, `/api/notion/setup`; upsert สถิติ member ทุกคนไปยัง Notion พร้อม schema auto-create
+- แสดงสถานะ sync ใน dashboard (last sync time / error message)
+
+**🗄️ Railway Volume Support**
+- เพิ่ม `[[volumes]]` ใน `railway.toml` (mount path `/data`) ป้องกันข้อมูลหายเมื่อ redeploy
+- Startup log แจ้งเตือนถ้าไม่ได้ใช้ persistent volume
+
+**🐛 Bug Fixes**
+- 📈 **DAU backfill** — `/api/dau` อ่าน `user_daily` (historical) + `daily_unique` (new) แก้ปัญหา DAU แสดง 0
+- 🗓️ **Contrib graph timezone fix** — ใช้ local date components (ไม่ใช้ `toISOString()`) แก้ปัญหาวันเลื่อน 1 วัน (UTC+7)
+
+**🔒 Security**
+- XSS protection ครบ — Jinja2 auto-escape, `escHTML()` ทุก `innerHTML`
+- CSRF token validation บน login form (Flask-WTF ≥ 1.2.0)
+- Atomic JSON writes — `tempfile.NamedTemporaryFile` + `os.replace()` ทุก `save_*()` function
+
+---
 
 ### v2.7.0 — Advanced Analytics Dashboard
 > `ffa00a3` · 2026-05-16
@@ -432,6 +463,9 @@ Python ถูกสร้างโดยใคร|Guido van Rossum
 | weekly_stats clear ทุก guild | `weekly_stats.clear()` ลบทุก guild | ✅ แก้แล้ว (v2.5.0) |
 | Dashboard แสดงข้อมูล server อื่น | ขาด `guild_id` filter | ✅ แก้แล้ว (v2.5.1) |
 | DAU นับ joins แทน unique users | ใช้ `daily_activity` ผิด | ✅ แก้แล้ว — `daily_unique.json` (v2.6.0) |
+| DAU chart แสดง 0 ทั้งหมด | `daily_unique` ว่าง (ไม่มี historical data) | ✅ แก้แล้ว — backfill จาก `user_daily` (v2.8.0) |
+| Contrib graph วันเลื่อน 1 วัน | `toISOString()` ใช้ UTC ทำให้ UTC+7 เลื่อน | ✅ แก้แล้ว — local date components (v2.8.0) |
+| ข้อมูลหายทุก redeploy | ไฟล์ JSON อยู่ใน ephemeral filesystem | ✅ แก้แล้ว — Railway Volume mount `/data` (v2.8.0) |
 
 ---
 
@@ -464,6 +498,6 @@ MIT License — ใช้ได้เสรี ดัดแปลงได้ �
 
 <div align="center">
 
-**AjarnBot v2.7.0** · Built with discord.py + Flask · Deployed on Railway
+**AjarnBot v2.8.0** · Built with discord.py + Flask · Deployed on Railway
 
 </div>
