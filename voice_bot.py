@@ -2050,9 +2050,14 @@ def api_history():
 @flask_app.route('/api/profile/<uid>')
 @require_auth
 def api_profile(uid):
-    guild_id, err = _guild_id_or_error()
-    if err:
-        return err
+    # Accept guild_id from query param OR fall back to session (for direct URL access)
+    guild_id = request.args.get('guild_id', '').strip()
+    if not guild_id:
+        guild_id = str(flask_session.get('current_guild_id', '')).strip()
+    if not guild_id:
+        return jsonify({'error': 'guild_id is required'}), 400
+    if not require_guild_access(guild_id):
+        return jsonify({'error': 'Forbidden'}), 403
     # Scope to the requested guild only
     seconds = 0
     name = 'Unknown'
@@ -2112,32 +2117,47 @@ def api_members():
     guild_obj = client.get_guild(int(guild_id))
     ud = user_daily.get(str(guild_id), {})
     ws = weekly_stats.get(str(guild_id), {})
+    # Start with tracked users (from voice sessions)
     seen = set(ud.keys()) | set(ws.keys())
-    result = []
+    result_map = {}
     for uid_str in seen:
         udata = ud.get(uid_str, {})
         wdata = ws.get(uid_str, {})
-        name = udata.get('name') or wdata.get('name') or 'Unknown'
-        alltime_sec = udata.get('alltime_seconds', wdata.get('seconds', 0))
-        avatar_url = None
-        try:
-            if guild_obj:
-                m = guild_obj.get_member(int(uid_str))
-                if m and m.display_avatar:
-                    avatar_url = str(m.display_avatar.url)
-        except Exception:
-            pass
-        result.append({
+        result_map[uid_str] = {
             'uid':              uid_str,
-            'name':             name,
-            'alltime_seconds':  alltime_sec,
-            'alltime_duration': format_duration(alltime_sec),
+            'name':             udata.get('name') or wdata.get('name') or 'Unknown',
+            'alltime_seconds':  udata.get('alltime_seconds', wdata.get('seconds', 0)),
+            'alltime_duration': format_duration(udata.get('alltime_seconds', wdata.get('seconds', 0))),
             'session_count':    udata.get('session_count', 0),
             'last_seen':        udata.get('last_seen', ''),
             'streak_max':       udata.get('streak_max', 0),
-            'avatar_url':       avatar_url,
-        })
-    result.sort(key=lambda x: x['alltime_seconds'], reverse=True)
+            'avatar_url':       None,
+        }
+    # Also include all cached guild members (even those with no voice history)
+    if guild_obj:
+        for member in guild_obj.members:
+            if member.bot:
+                continue
+            uid_str = str(member.id)
+            avatar_url = str(member.display_avatar.url) if member.display_avatar else None
+            if uid_str not in result_map:
+                result_map[uid_str] = {
+                    'uid':              uid_str,
+                    'name':             member.display_name,
+                    'alltime_seconds':  0,
+                    'alltime_duration': '-',
+                    'session_count':    0,
+                    'last_seen':        '',
+                    'streak_max':       0,
+                    'avatar_url':       avatar_url,
+                }
+            else:
+                # Update avatar from live cache
+                result_map[uid_str]['avatar_url'] = avatar_url
+                # Update name to current display name
+                if result_map[uid_str]['name'] in ('Unknown', ''):
+                    result_map[uid_str]['name'] = member.display_name
+    result = sorted(result_map.values(), key=lambda x: x['alltime_seconds'], reverse=True)
     return jsonify(result)
 
 @flask_app.route('/api/votes')

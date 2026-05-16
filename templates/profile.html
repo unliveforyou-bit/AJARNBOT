@@ -99,10 +99,13 @@
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function fmt(sec){if(!sec)return'-';const h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60);return h?h+'h '+m+'m':m+'m';}
 const uid=location.pathname.split('/').pop();
-const guildId=new URLSearchParams(location.search).get('guild_id')||'';
+// guild_id: URL param → sessionStorage → let server use session fallback
+const guildId=new URLSearchParams(location.search).get('guild_id')
+              ||sessionStorage.getItem('currentGuildId')
+              ||'';
 async function load(){
-  if(!guildId){document.getElementById('memberName').textContent='ไม่พบ guild_id';return;}
-  let d;try{const r=await fetch('/api/profile/'+uid+'?guild_id='+guildId);if(!r.ok)throw new Error(r.status);d=await r.json();}
+  const apiUrl='/api/profile/'+uid+(guildId?'?guild_id='+guildId:'');
+  let d;try{const r=await fetch(apiUrl);if(!r.ok)throw new Error(r.status);d=await r.json();}
   catch(e){document.getElementById('memberName').textContent='โหลดไม่ได้';return;}
 
   document.getElementById('pageTitle').textContent=esc(d.name);

@@ -59,6 +59,7 @@ function applyConfig(c){
   // channel dropdowns populated by loadChannelDropdowns()
 }
 let currentGuildId = window.CURRENT_GUILD_ID || '';
+if(currentGuildId)sessionStorage.setItem('currentGuildId',currentGuildId);
 let isOwner=false;
 function applyOwnerUI(owner){
   isOwner=owner;
@@ -155,6 +156,7 @@ async function switchGuild(guildId){
   try{
     await fetch('/api/set-guild',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:guildId})});
     currentGuildId=guildId;
+    sessionStorage.setItem('currentGuildId',guildId);
     // sync config-area dropdown + reload config/channels for new guild
     const sel=document.getElementById('guildSelect');
     if(sel){sel.value=guildId;await onGuildChange();}
