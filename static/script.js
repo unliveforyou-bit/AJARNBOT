@@ -1,3 +1,22 @@
+// ── CSRF-aware POST helper ─────────────────────────────────────────────────────
+let _csrfToken = '';
+async function _getCSRF() {
+  if (_csrfToken) return _csrfToken;
+  try {
+    const r = await fetch('/api/csrf-token');
+    if (r.ok) { const d = await r.json(); _csrfToken = d.token || ''; }
+  } catch (_) { /* non-critical — CSRF validation will fail gracefully */ }
+  return _csrfToken;
+}
+async function _post(url, body = {}) {
+  const tok = await _getCSRF();
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': tok },
+    body: JSON.stringify(body),
+  });
+}
+// ──────────────────────────────────────────────────────────────────────────────
 const TOGGLES=[
   {key:'announce_join',label:'เข้าห้อง'},{key:'announce_leave',label:'ออกห้อง'},
   {key:'announce_move',label:'ย้ายห้อง'},{key:'announce_mute',label:'ปิด/เปิดไมค์'},
@@ -87,14 +106,15 @@ async function loadConfig(){
     applyOwnerUI(!!c.is_owner);
     if(c.app_version){
       const ft=document.getElementById('appFooter');
-      if(ft)ft.innerHTML='AjarnBot <span style="color:var(--accent);font-weight:700">v'+c.app_version+'</span>'
-        +' · '+c.app_build_date
+      if(ft)ft.innerHTML='AjarnBot <span style="color:var(--accent);font-weight:700">v'+escHTML(c.app_version)+'</span>'
+        +' · '+escHTML(c.app_build_date)
         +' · Built with discord.py + Flask'
         +' · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank">GitHub</a>';
     }
     if(currentGuildId){
       // Apply effective per-guild config (guild overrides + global fallback)
       const gr=await fetch('/api/guild-config?guild_id='+currentGuildId);
+      if(!gr.ok)throw new Error(gr.status);
       const gc=await gr.json();
       applyConfig(gc);
     }else{
@@ -155,7 +175,7 @@ async function loadGuilds(){
 async function switchGuild(guildId){
   if(!guildId)return;
   try{
-    await fetch('/api/set-guild',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:guildId})});
+    await _post('/api/set-guild',{guild_id:guildId});
     currentGuildId=guildId;
     sessionStorage.setItem('currentGuildId',guildId);
     // sync config-area dropdown + reload config/channels for new guild
@@ -183,20 +203,18 @@ async function onGuildChange(){
   applyConfig(cfg);  // update toggles + number inputs for this guild
   await loadChannelDropdowns(currentGuildId,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
 }
-function configEndpoint(extraBody={}){
+function _configUrl(extraBody={}){
   // Route saves: guild-config when guild selected, global config when owner + no guild
   if(currentGuildId){
-    return ['/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({guild_id:currentGuildId,...extraBody})}];
+    return ['/api/guild-config',{guild_id:currentGuildId,...extraBody}];
   }
-  return ['/api/config',{method:'POST',headers:{'Content-Type':'application/json'},
-          body:JSON.stringify(extraBody)}];
+  return ['/api/config',extraBody];
 }
 const toggleConfig=debounce(async function(key,val){
   const p={};p[key]=val;
   try{
-    const [url,opts]=configEndpoint(p);
-    const r=await fetch(url,opts);
+    const [url,body]=_configUrl(p);
+    const r=await _post(url,body);
     if(!r.ok)throw new Error(r.status);
     showToast('บันทึกแล้ว');
   }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
@@ -205,8 +223,8 @@ async function saveNums(btn){
   withLoading(btn,async()=>{
     const p={};NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
     try{
-      const [url,opts]=configEndpoint(p);
-      const r=await fetch(url,opts);
+      const [url,body]=_configUrl(p);
+      const r=await _post(url,body);
       if(!r.ok)throw new Error(r.status);
       showToast('บันทึกแล้ว');
     }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
@@ -216,8 +234,8 @@ async function saveSpam(btn){
   withLoading(btn,async()=>{
     const p={};SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)p[n.key]=Number(el.value);});
     try{
-      const [url,opts]=configEndpoint(p);
-      const r=await fetch(url,opts);
+      const [url,body]=_configUrl(p);
+      const r=await _post(url,body);
       if(!r.ok)throw new Error(r.status);
       showToast('บันทึก Anti-spam แล้ว');
     }catch(e){showToast('บันทึกไม่สำเร็จ',true);}
@@ -232,11 +250,11 @@ async function saveChannels(btn){
       if(currentGuildId){
         const sel=document.getElementById('guildSelect');
         const name=sel.selectedOptions[0]?sel.selectedOptions[0].text:'Server';
-        const r=await fetch('/api/guild-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId,...p})});
+        const r=await _post('/api/guild-config',{guild_id:currentGuildId,...p});
         if(!r.ok)throw new Error(r.status);
         showToast('บันทึก Channel Routing สำหรับ '+name);
       }else{
-        const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});
+        const r=await _post('/api/config',p);
         if(!r.ok)throw new Error(r.status);
         showToast('บันทึก Global Channel Routing แล้ว');
       }
@@ -244,8 +262,7 @@ async function saveChannels(btn){
   });
 }
 async function action(type){
-  const body=JSON.stringify({guild_id:currentGuildId||null});
-  const r=await fetch('/api/action/'+type,{method:'POST',headers:{'Content-Type':'application/json'},body});
+  const r=await _post('/api/action/'+type,{guild_id:currentGuildId||null});
   const d=await r.json();showToast(d.ok?'ส่งแล้ว!':'เกิดข้อผิดพลาด',!d.ok);
 }
 async function refreshStatus(){
@@ -479,7 +496,7 @@ async function loadVotes(){
 }
 async function resetVotes(){
   if(!confirm('รีเซ็ตคะแนนมุขทั้งหมด?'))return;
-  await fetch('/api/votes/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
+  await _post('/api/votes/reset',{});
   showToast('รีเซ็ตแล้ว');loadVotes();
 }
 function toggleTheme(){
@@ -684,6 +701,7 @@ async function loadDowHeatmap(){
   if(!currentGuildId)return;
   const wrap=document.getElementById('dowWrap');if(!wrap)return;
   let d;try{const r=await fetch('/api/dow-heatmap?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d || !d.matrix || !d.days) return;
   const matrix=d.matrix;const days=d.days;
   const flat=matrix.flat();const maxV=Math.max(...flat,1);
   const total=flat.reduce((a,b)=>a+b,0);
@@ -779,8 +797,7 @@ async function loadNotionStatus(){
 async function syncToNotion(btn){
   withLoading(btn,async()=>{
     try{
-      const r=await fetch('/api/notion/sync',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({guild_id:currentGuildId||null})});
+      const r=await _post('/api/notion/sync',{guild_id:currentGuildId||null});
       const d=await r.json();
       if(d.ok){showToast('Notion sync สำเร็จ · '+d.synced+' rows · '+escHTML(d.synced_at));}
       else{showToast('Sync ไม่สำเร็จ: '+escHTML(d.error||'unknown'),true);}
@@ -791,7 +808,7 @@ async function syncToNotion(btn){
 async function notionSetup(btn){
   withLoading(btn,async()=>{
     try{
-      const r=await fetch('/api/notion/setup',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+      const r=await _post('/api/notion/setup',{});
       const d=await r.json();
       if(d.ok){showToast('Setup สำเร็จ — Database พร้อมใช้งาน');}
       else{showToast('Setup ไม่สำเร็จ: '+escHTML(d.error||'unknown'),true);}

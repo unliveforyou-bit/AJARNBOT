@@ -3,7 +3,7 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '2.7.0'
+APP_VERSION = '3.0.0'
 APP_BUILD_DATE = '2026-05-16'
 import discord
 from discord.ext import tasks
@@ -29,6 +29,8 @@ _lock_user_daily      = threading.Lock()
 _lock_trivia          = threading.Lock()
 _lock_event_counts    = threading.Lock()
 _lock_active_sessions = threading.Lock()
+_lock_spam            = threading.Lock()
+_lock_mute_cooldown   = threading.Lock()
 # ================================
 
 THAI_TZ = ZoneInfo('Asia/Bangkok')
@@ -247,9 +249,10 @@ daily_digest_sent = {}   # {guild_id_str: str} — date string "YYYY-MM-DD" of l
 
 def load_stats():
     global weekly_stats
-    if os.path.exists(STATS_FILE):
-        with open(STATS_FILE, encoding='utf-8') as f:
-            weekly_stats = json.load(f)
+    with _lock_stats:
+        if os.path.exists(STATS_FILE):
+            with open(STATS_FILE, encoding='utf-8') as f:
+                weekly_stats = json.load(f)
 
 def save_stats():
     with _lock_stats:
@@ -263,9 +266,10 @@ hourly_activity = {}   # {guild_id: {hour_str: int}}
 
 def load_hourly():
     global hourly_activity
-    if os.path.exists(HOURLY_FILE):
-        with open(HOURLY_FILE, encoding='utf-8') as f:
-            hourly_activity = json.load(f)
+    with _lock_hourly:
+        if os.path.exists(HOURLY_FILE):
+            with open(HOURLY_FILE, encoding='utf-8') as f:
+                hourly_activity = json.load(f)
 
 def save_hourly():
     with _lock_hourly:
@@ -277,9 +281,10 @@ session_history = []
 
 def load_history():
     global session_history
-    if os.path.exists(HISTORY_FILE):
-        with open(HISTORY_FILE, encoding='utf-8') as f:
-            session_history = json.load(f)
+    with _lock_history:
+        if os.path.exists(HISTORY_FILE):
+            with open(HISTORY_FILE, encoding='utf-8') as f:
+                session_history = json.load(f)
 
 def save_history():
     with _lock_history:
@@ -293,9 +298,10 @@ active_joke_channels = set()   # channel_ids ที่กำลัง deliver jo
 
 def load_votes():
     global joke_votes
-    if os.path.exists(VOTES_FILE):
-        with open(VOTES_FILE, encoding='utf-8') as f:
-            joke_votes = json.load(f)
+    with _lock_votes:
+        if os.path.exists(VOTES_FILE):
+            with open(VOTES_FILE, encoding='utf-8') as f:
+                joke_votes = json.load(f)
 
 def save_votes():
     with _lock_votes:
@@ -348,10 +354,11 @@ def record_voice_event(guild_id, member_id):
     key = (guild_id, member_id)
     now = datetime.now(THAI_TZ)
     spam_window = get_gc(guild_id, 'spam_window_sec', SPAM_WINDOW_SEC)
-    events = voice_spam_tracker.get(key, [])
-    events = [t for t in events if (now - t).total_seconds() < spam_window]
-    events.append(now)
-    voice_spam_tracker[key] = events
+    with _lock_spam:
+        events = voice_spam_tracker.get(key, [])
+        events = [t for t in events if (now - t).total_seconds() < spam_window]
+        events.append(now)
+        voice_spam_tracker[key] = events
 
 def check_voice_spam(guild_id, member_id):
     """Check if this member is spamming voice. Call AFTER record_voice_event."""
@@ -359,8 +366,9 @@ def check_voice_spam(guild_id, member_id):
     now = datetime.now(THAI_TZ)
     spam_window = get_gc(guild_id, 'spam_window_sec', SPAM_WINDOW_SEC)
     spam_max    = get_gc(guild_id, 'spam_max_events', SPAM_MAX_EVENTS)
-    events = [t for t in voice_spam_tracker.get(key, []) if (now - t).total_seconds() < spam_window]
-    return len(events) >= spam_max
+    with _lock_spam:
+        events = [t for t in voice_spam_tracker.get(key, []) if (now - t).total_seconds() < spam_window]
+        return len(events) >= spam_max
 # =====================
 
 # ===== record join/leave (Multi-guild) =====
@@ -392,14 +400,15 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
         uentry['first_seen'] = now_iso
     uentry['last_seen'] = now_iso
     save_user_daily()
-    # DAU: track unique users per day
-    if gid not in daily_unique:
-        daily_unique[gid] = {}
-    if date_str not in daily_unique[gid]:
-        daily_unique[gid][date_str] = []
-    if uid_str not in daily_unique[gid][date_str]:
-        daily_unique[gid][date_str].append(uid_str)
-        save_daily_unique()
+    # DAU: track unique users per day — hold lock for atomic check+append
+    with _lock_daily_unique:
+        if gid not in daily_unique:
+            daily_unique[gid] = {}
+        if date_str not in daily_unique[gid]:
+            daily_unique[gid][date_str] = []
+        if uid_str not in daily_unique[gid][date_str]:
+            daily_unique[gid][date_str].append(uid_str)
+            _atomic_json_dump(daily_unique, DAILY_UNIQUE_FILE, ensure_ascii=False)
     save_active_sessions()   # ← persist immediately so restart restores correctly
 
 def record_leave(guild_id, member_id) -> list:
@@ -462,10 +471,11 @@ def check_cooldown(member_id, event, guild_id=None):
     key = (member_id, event)
     now = datetime.now(THAI_TZ)
     cooldown_sec = get_gc(guild_id, 'mute_cooldown_sec', 3) if guild_id else bot_config.get('mute_cooldown_sec', 3)
-    if key in mute_cooldown and (now - mute_cooldown[key]).total_seconds() < cooldown_sec:
-        return False
-    mute_cooldown[key] = now
-    return True
+    with _lock_mute_cooldown:
+        if key in mute_cooldown and (now - mute_cooldown[key]).total_seconds() < cooldown_sec:
+            return False
+        mute_cooldown[key] = now
+        return True
 
 command_rate_limit = {}  # {(user_id, cmd): last_used_timestamp}
 COMMAND_COOLDOWN_SEC = 30
@@ -502,12 +512,16 @@ def compute_streak(dates_dict: dict) -> int:
 
 # ===== Feature 5: Milestone helpers ======================================
 def get_user_alltime_seconds(guild_id: str, user_id: str) -> int:
-    """คำนวณเวลา Voice รวมทุกเวลาของ user ใน guild นั้น"""
-    total = sum(
+    """คำนวณเวลา Voice รวมทุกเวลาของ user ใน guild นั้น.
+    Uses pre-aggregated user_daily cache (O(1)); falls back to session_history scan.
+    """
+    cached = user_daily.get(str(guild_id), {}).get(str(user_id), {}).get('alltime_seconds')
+    if cached is not None:
+        return int(cached)
+    return sum(
         s.get('seconds', 0) for s in session_history
-        if s.get('guild_id') == guild_id and s.get('uid') == user_id
+        if s.get('guild_id') == str(guild_id) and s.get('uid') == str(user_id)
     )
-    return total
 
 def check_and_award_milestones(guild_id: str, user_id: str) -> list:
     """
@@ -1517,8 +1531,52 @@ flask_app.config['SESSION_COOKIE_SECURE'] = True
 flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
 flask_app.config['WTF_CSRF_TIME_LIMIT'] = None   # no expiry on CSRF token (session-tied)
 flask_app.config['WTF_CSRF_CHECK_DEFAULT'] = False  # validate manually per route
+flask_app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken']   # accept CSRF token from AJAX header
+flask_app.permanent_session_lifetime = timedelta(hours=24)  # sessions expire after 24h
 
 csrf = CSRFProtect(flask_app)  # sets up csrf_token() Jinja2 helper + token infrastructure
+
+@flask_app.after_request
+def _set_security_headers(response):
+    """Add security headers to every response."""
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    response.headers['Content-Security-Policy'] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https://cdn.discordapp.com; "
+        "connect-src 'self';"
+    )
+    return response
+
+_CSRF_SKIP_PATHS = frozenset([
+    '/health', '/login', '/callback', '/manifest.json', '/sw.js', '/invite', '/logout',
+])
+
+@flask_app.before_request
+def _validate_csrf_on_mutating_requests():
+    """Validate CSRF token on POST/PUT/PATCH/DELETE — exempt API key + safe paths."""
+    if flask_app.testing:
+        return   # skip CSRF in unit-test mode — tests use authenticated sessions directly
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return
+    if request.path in _CSRF_SKIP_PATHS:
+        return
+    # API key = machine-to-machine, exempt from browser CSRF check
+    received_key = request.headers.get('X-API-Key', '')
+    if DASHBOARD_API_KEY and hmac.compare_digest(received_key, DASHBOARD_API_KEY):
+        return
+    # Check X-CSRFToken header (AJAX) or csrf_token form field (HTML forms)
+    token = request.headers.get('X-CSRFToken', '') or request.form.get('csrf_token', '')
+    try:
+        validate_csrf(token)
+    except ValidationError:
+        if request.path.startswith('/api/'):
+            return jsonify({'error': 'CSRF validation failed — include X-CSRFToken header'}), 403
+        return redirect('/login')
 
 # ===== Auth helpers =====
 def session_is_owner() -> bool:
@@ -1568,6 +1626,12 @@ def require_guild_access(guild_id: str):
         return True
     return guild_id in session_admin_guild_ids()
 
+_SNOWFLAKE_RE = re.compile(r'^\d{1,20}$')
+
+def _validate_snowflake(value: str) -> bool:
+    """Validate that a guild_id is a positive integer string (Discord snowflake format)."""
+    return bool(_SNOWFLAKE_RE.match(value))
+
 def _guild_id_or_error():
     """
     ดึง guild_id จาก request.args และตรวจ access.
@@ -1577,9 +1641,18 @@ def _guild_id_or_error():
     guild_id = request.args.get('guild_id', '').strip()
     if not guild_id:
         return None, (jsonify({'error': 'guild_id is required'}), 400)
+    if not _validate_snowflake(guild_id):
+        return None, (jsonify({'error': 'invalid guild_id format'}), 400)
     if not require_guild_access(guild_id):
         return None, (jsonify({'error': 'Forbidden'}), 403)
     return guild_id, None
+
+@flask_app.route('/api/csrf-token')
+@require_auth
+def api_csrf_token():
+    """Return a fresh CSRF token for use in AJAX POST requests."""
+    from flask_wtf.csrf import generate_csrf
+    return jsonify({'token': generate_csrf()})
 # ========================
 
 @flask_app.route('/login', methods=['GET', 'POST'])
@@ -1915,23 +1988,30 @@ def api_stats_period(period):
 @flask_app.route('/api/guilds')
 @require_auth
 def api_guilds():
-    # If logged in via Discord, filter to guilds where user is admin
+    # If logged in via Discord, filter to guilds where user has admin perms
     discord_guilds = flask_session.get('discord_guilds')
+    ADMIN_PERMS = 0x8 | 0x20  # ADMINISTRATOR | MANAGE_GUILD
     if discord_guilds:
-        admin_ids = {g['id'] for g in discord_guilds if (int(g.get('permissions', 0)) & 0x8) == 0x8 or g.get('owner')}
+        admin_ids = {g['id'] for g in discord_guilds
+                     if g.get('owner') or (int(g.get('permissions', 0)) & ADMIN_PERMS) != 0}
         guilds = [{'id': str(g.id), 'name': g.name, 'member_count': g.member_count}
                   for g in client.guilds if str(g.id) in admin_ids]
-    else:
+    elif session_is_owner():
+        # Password-login owner: may see all guilds
         guilds = [{'id': str(g.id), 'name': g.name, 'member_count': g.member_count}
                   for g in client.guilds]
+    else:
+        guilds = []
     return jsonify(guilds)
 
 @flask_app.route('/api/channels')
 @require_auth
 def api_channels():
-    guild_id = request.args.get('guild_id', '')
+    guild_id = request.args.get('guild_id', '').strip()
     if not guild_id:
         return jsonify([])
+    if not require_guild_access(guild_id):
+        return jsonify({'error': 'Forbidden'}), 403
     try:
         g = client.get_guild(int(guild_id))
     except ValueError:
@@ -2100,7 +2180,7 @@ def api_profile(uid):
             seconds += int((datetime.now(THAI_TZ) - jt).total_seconds())
             name = n
     sessions = [s for s in session_history
-                if s.get('guild_id') == guild_id and (s.get('uid') == uid or s.get('name') == name)]
+                if s.get('guild_id') == guild_id and s.get('uid') == uid]
     hour_counts = {}
     for s in sessions:
         try:
@@ -3206,6 +3286,13 @@ def api_user_daily():
 
 @flask_app.route('/health')
 def health():
+    """Public health check — minimal info only (no operational data)."""
+    return jsonify({'ok': client.is_ready()})
+
+@flask_app.route('/api/health')
+@require_auth
+def api_health():
+    """Authenticated health check with operational details."""
     uptime_sec = int((datetime.now(THAI_TZ) - start_time).total_seconds())
     latency_ms = round(client.latency * 1000, 1) if client.is_ready() else None
     return jsonify({
@@ -3219,7 +3306,7 @@ def health():
     })
 
 @flask_app.route('/api/logs')
-@require_auth
+@require_owner
 def api_logs():
     lines = []
     if os.path.exists(LOG_FILE):
@@ -3242,7 +3329,10 @@ def _action_guild_id_or_error():
     data = request.get_json(silent=True) or {}
     guild_id = str(data.get('guild_id') or flask_session.get('current_guild_id') or '').strip()
     if not guild_id:
-        return None, None   # allow owner to act without guild_id (global fallback)
+        # Only owner may act without specifying a guild (global fallback)
+        if not session_is_owner():
+            return None, (jsonify({'error': 'guild_id required'}), 400)
+        return None, None
     if not require_guild_access(guild_id):
         return None, (jsonify({'error': 'Forbidden'}), 403)
     return guild_id, None
@@ -3313,10 +3403,20 @@ async def _test_trivia(guild_id=None):
 
 # ===== Start =====
 def run_discord():
-    global bot_loop
-    bot_loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(bot_loop)
-    bot_loop.run_until_complete(client.start(TOKEN))
+    """Run Discord bot with automatic restart on transient failures."""
+    global bot_loop, client
+    import time as _time
+    while True:
+        try:
+            bot_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(bot_loop)
+            bot_loop.run_until_complete(client.start(TOKEN))
+            log('[Discord] bot exited cleanly — not restarting')
+            break  # clean exit (e.g. ctrl+c)
+        except Exception as e:
+            log(f'[Discord] bot crashed: {e} — restarting in 10s')
+            _time.sleep(10)
+            client = VoiceBot()  # fresh client for reconnect
 
 def run_flask():
     import logging
