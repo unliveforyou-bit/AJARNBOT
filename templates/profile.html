@@ -49,6 +49,22 @@
   .ch-time{font-size:11px;color:var(--muted);min-width:55px;text-align:right;flex-shrink:0;}
   .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
   @media(max-width:600px){.two-col{grid-template-columns:1fr;}}
+  /* ── Timeline ─────────────────────────────── */
+  .tl-controls{display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .tl-date{background:var(--surface);border:1px solid var(--border);border-radius:6px;
+           color:var(--text);padding:5px 10px;font-size:13px;cursor:pointer;}
+  .tl-date:focus{outline:2px solid var(--accent);outline-offset:2px;}
+  .tl-summary{font-size:12px;color:var(--muted);margin-left:auto;}
+  .tl-svg-wrap{position:relative;height:48px;margin-bottom:6px;}
+  .tl-axis{display:flex;justify-content:space-between;color:var(--muted);font-size:10px;margin-bottom:10px;}
+  .tl-row{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:12px;}
+  .tl-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+  .tl-dot.live{animation:tl-pulse 1.2s infinite;}
+  @keyframes tl-pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .tl-ch{color:var(--muted);min-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .tl-range{flex:1;font-size:11px;color:var(--muted);}
+  .tl-dur{color:var(--accent);font-weight:600;min-width:55px;text-align:right;}
+  .tl-empty{color:var(--muted);font-size:13px;padding:12px 0;}
 </style>
 </head>
 <body>
@@ -93,6 +109,23 @@
   <div class="card"><div class="card-title">Session History</div>
     <table><thead><tr><th>ห้อง</th><th>เข้า</th><th>ออก</th><th>นาน</th></tr></thead>
     <tbody id="sessBody"><tr><td colspan="4" class="empty">กำลังโหลด...</td></tr></tbody></table>
+  </div>
+
+  <!-- Voice Timeline -->
+  <div class="card" id="timelineCard">
+    <div class="card-title">Voice Timeline</div>
+    <div class="tl-controls">
+      <input type="date" id="tlDate" class="tl-date" aria-label="เลือกวันที่">
+      <span class="tl-summary" id="tlSummary"></span>
+    </div>
+    <!-- 24h SVG bar -->
+    <div class="tl-svg-wrap">
+      <svg id="tlSvg" width="100%" height="48" style="display:block;" aria-hidden="true"></svg>
+    </div>
+    <div class="tl-axis">
+      <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:59</span>
+    </div>
+    <div id="tlList"></div>
   </div>
 </main>
 <script>
@@ -166,6 +199,77 @@ async function load(){
   if(!d.sessions||!d.sessions.length){body.innerHTML='<tr><td colspan="4" class="empty">ยังไม่มีข้อมูล</td></tr>';return;}
   body.innerHTML=d.sessions.map(s=>'<tr><td>'+esc(s.channel)+'</td><td style="color:var(--muted)">'+esc(s.join)+'</td><td style="color:var(--muted)">'+esc(s.leave)+'</td><td>'+esc(s.duration)+'</td></tr>').join('');
 }
+// ── Timeline ──────────────────────────────────────────────────────────────
+function todayStr(){
+  const d=new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+const TIMELINE_COLORS=['#5865f2','#23a559','#f0b132','#f85149','#00b8d4','#9c59b6','#e67e22'];
+async function loadTimeline(date){
+  const tlDate=document.getElementById('tlDate');
+  if(date)tlDate.value=date;
+  const d=tlDate.value||todayStr();
+  const url='/api/timeline/'+uid+'?guild_id='+encodeURIComponent(guildId)+'&date='+encodeURIComponent(d);
+  let data;
+  try{const r=await fetch(url);if(!r.ok)throw new Error(r.status);data=await r.json();}
+  catch(e){document.getElementById('tlList').innerHTML='<div class="tl-empty">โหลดไม่ได้</div>';return;}
+
+  const summary=document.getElementById('tlSummary');
+  const svgEl=document.getElementById('tlSvg');
+  const listEl=document.getElementById('tlList');
+
+  if(!data.sessions||!data.sessions.length){
+    summary.textContent='';
+    svgEl.innerHTML='<rect x="0" y="16" width="100%" height="16" rx="4" fill="rgba(255,255,255,0.04)"/>';
+    listEl.innerHTML='<div class="tl-empty">ไม่มี session วันนี้</div>';
+    return;
+  }
+
+  summary.textContent=data.total_dur+' · '+data.count+' sessions';
+
+  // Draw SVG bars
+  const DAY_SEC=86400;
+  const svgBg='<rect x="0" y="16" width="100%" height="16" rx="4" fill="rgba(255,255,255,0.04)"/>';
+  const bars=data.sessions.map((s,i)=>{
+    const color=TIMELINE_COLORS[i%TIMELINE_COLORS.length];
+    const joinParts=(s.join||'').split(' ');
+    const timePart=joinParts[1]||'00:00';
+    const [jh,jm]=(timePart+':00').split(':').map(Number);
+    const joinSec=jh*3600+jm*60;
+    let durSec=s.seconds||0;
+    if(s.live){
+      const now=new Date();
+      const nowSec=now.getHours()*3600+now.getMinutes()*60+now.getSeconds();
+      durSec=Math.max(nowSec-joinSec,60);
+    }
+    const x=((joinSec/DAY_SEC)*100).toFixed(2)+'%';
+    const w=Math.max((durSec/DAY_SEC)*100,0.5).toFixed(2)+'%';
+    const opacity=s.live?'0.9':'0.75';
+    return'<rect x="'+x+'" y="14" width="'+w+'" height="20" rx="3" fill="'+color+'" opacity="'+opacity+'">'
+      +'<title>'+esc(s.channel)+' '+esc(s.join.slice(11,16))+' ('+esc(s.duration)+')</title></rect>';
+  }).join('');
+  svgEl.innerHTML=svgBg+bars;
+
+  // Session list
+  listEl.innerHTML=data.sessions.map((s,i)=>{
+    const color=TIMELINE_COLORS[i%TIMELINE_COLORS.length];
+    const joinTime=(s.join||'').slice(11,16)||'—';
+    const leaveTime=s.leave?(s.leave.slice(11,16)):'ตอนนี้';
+    const dotClass='tl-dot'+(s.live?' live':'');
+    return'<div class="tl-row">'
+      +'<div class="'+dotClass+'" style="background:'+color+'"></div>'
+      +'<div class="tl-ch"># '+esc(s.channel)+'</div>'
+      +'<div class="tl-range">'+esc(joinTime)+' → '+esc(leaveTime)+'</div>'
+      +'<div class="tl-dur">'+esc(s.duration)+'</div>'
+      +'</div>';
+  }).join('');
+}
+
+document.getElementById('tlDate').addEventListener('change',()=>loadTimeline());
+const _tlDateEl=document.getElementById('tlDate');
+_tlDateEl.value=todayStr();
+_tlDateEl.max=todayStr();
 load();
+loadTimeline(todayStr());
 </script>
 </body></html>

@@ -1304,6 +1304,7 @@ async def slash_help(interaction: discord.Interaction):
         '`/rank [period]` — อันดับ Voice ของ server (today/week/month)',
         '`/stats [period]` — สถิติ Voice ของตัวเอง (ephemeral)',
         '`/compare @user [period]` — เปรียบสถิติกับคนอื่น',
+        '`/timeline [@user] [date]` — ดู Voice timeline รายชั่วโมงของวัน',
         '`/joke` — รับมุขสุ่ม',
         '`/trivia` — รับคำถาม Trivia',
         '`/trivia-rank` — อันดับคะแนน Trivia',
@@ -1375,11 +1376,77 @@ async def slash_compare(interaction: discord.Interaction,
     await interaction.followup.send('\n'.join(lines))
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── /timeline ────────────────────────────────────────────────────────────────
+@client.tree.command(name="timeline", description="ดู Voice timeline ของวันนี้")
+@app_commands.describe(
+    member="สมาชิกที่ต้องการดู (ค่าเริ่มต้น: ตัวเอง)",
+    date="วันที่ในรูปแบบ YYYY-MM-DD (ค่าเริ่มต้น: วันนี้)",
+)
+@app_commands.checks.cooldown(1, 15.0)
+async def slash_timeline(interaction: discord.Interaction,
+                         member: discord.Member | None = None,
+                         date: str | None = None):
+    await interaction.response.defer(ephemeral=True)
+    gid     = str(interaction.guild_id) if interaction.guild_id else None
+    target  = member or interaction.user
+    uid     = str(target.id)
+    date_str = date or datetime.now(THAI_TZ).strftime('%Y-%m-%d')
+
+    # Validate date format
+    try:
+        datetime.strptime(date_str, '%Y-%m-%d')
+    except ValueError:
+        await interaction.followup.send('รูปแบบวันที่ไม่ถูกต้อง ใช้ YYYY-MM-DD', ephemeral=True)
+        return
+
+    # Filter sessions
+    day_sessions = [
+        s for s in session_history
+        if s.get('guild_id') == gid
+        and s.get('uid') == uid
+        and s.get('join', '').startswith(date_str)
+    ]
+
+    # Add live session
+    live_info = None
+    now = datetime.now(THAI_TZ)
+    if now.strftime('%Y-%m-%d') == date_str:
+        for (g, m), (_, jt, ch) in list(voice_join_times.items()):
+            if str(m) == uid and str(g) == gid:
+                elapsed = int((now - jt).total_seconds())
+                live_info = (ch, jt, elapsed)
+
+    day_sessions.sort(key=lambda x: x.get('join', ''))
+    total_sec = sum(s.get('seconds', 0) for s in day_sessions)
+    if live_info:
+        total_sec += live_info[2]
+
+    if not day_sessions and not live_info:
+        await interaction.followup.send(
+            f'ไม่มีข้อมูล Voice ของ **{target.display_name}** ในวันที่ {date_str}', ephemeral=True)
+        return
+
+    lines = [f'**Voice Timeline — {target.display_name}** ({date_str})']
+    for i, s in enumerate(day_sessions, 1):
+        leave = s.get('leave', '') or '—'
+        lines.append(f'`{i}.` **{s.get("channel","?")}** | {s["join"][11:16]} → {leave[11:16] if leave != "—" else "—"} | {format_duration(s.get("seconds",0))}')
+    if live_info:
+        ch, jt, elapsed = live_info
+        lines.append(f'`🔴` **{ch}** | {jt.strftime("%H:%M")} → ตอนนี้ | {format_duration(elapsed)} (live)')
+
+    lines.append(f'\n**รวม: {format_duration(total_sec)}** | {len(day_sessions) + (1 if live_info else 0)} sessions')
+    if total_sec > 0:
+        lines.append(f'Dashboard: {DASHBOARD_BASE_URL}/profile/{uid}')
+
+    await interaction.followup.send('\n'.join(lines), ephemeral=True)
+# ─────────────────────────────────────────────────────────────────────────────
+
 @slash_rank.error
 @slash_joke.error
 @slash_trivia.error
 @slash_stats.error
 @slash_compare.error
+@slash_timeline.error
 async def on_slash_cooldown(interaction: discord.Interaction, error: app_commands.AppCommandError):
     if isinstance(error, app_commands.CommandOnCooldown):
         await interaction.response.send_message(f'⏳ รอ {error.retry_after:.0f} วินาทีก่อน', ephemeral=True)
@@ -2275,6 +2342,72 @@ def api_profile(uid):
                     'avatar_url':       avatar_url,
                     'note':             _sheets_notes.get(str(guild_id), {}).get(uid, ''),
                     })
+
+@flask_app.route('/api/timeline/<uid>')
+@require_auth
+def api_timeline(uid: str):
+    """Return all sessions for a user on a given date (default: today).
+    ?guild_id=X&date=YYYY-MM-DD
+    """
+    guild_id = request.args.get('guild_id', '').strip()
+    if not guild_id:
+        guild_id = str(flask_session.get('current_guild_id', '')).strip()
+    if not guild_id:
+        return jsonify({'error': 'guild_id is required'}), 400
+    if not require_guild_access(guild_id):
+        return jsonify({'error': 'Forbidden'}), 403
+
+    date_str = request.args.get('date', '').strip()
+    if date_str:
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            return jsonify({'error': 'invalid date format, use YYYY-MM-DD'}), 400
+    else:
+        date_str = datetime.now(THAI_TZ).strftime('%Y-%m-%d')
+
+    # Filter sessions for this user + guild on the requested date
+    day_sessions = []
+    for s in session_history:
+        if s.get('guild_id') != guild_id or s.get('uid') != uid:
+            continue
+        join_str = s.get('join', '')
+        if not join_str.startswith(date_str):
+            continue
+        day_sessions.append({
+            'channel':  s.get('channel', '?'),
+            'join':     join_str,
+            'leave':    s.get('leave', ''),
+            'seconds':  s.get('seconds', 0),
+            'duration': format_duration(s.get('seconds', 0)),
+        })
+
+    # Add ongoing live session if user is currently in voice today
+    now = datetime.now(THAI_TZ)
+    if now.strftime('%Y-%m-%d') == date_str:
+        for (gid, mid), (dname, jt, ch_name) in list(voice_join_times.items()):
+            if str(mid) == uid and str(gid) == guild_id:
+                elapsed = int((now - jt).total_seconds())
+                day_sessions.append({
+                    'channel':  ch_name,
+                    'join':     jt.strftime('%Y-%m-%d %H:%M'),
+                    'leave':    '',          # ongoing
+                    'seconds':  elapsed,
+                    'duration': format_duration(elapsed) + ' (กำลังอยู่)',
+                    'live':     True,
+                })
+
+    day_sessions.sort(key=lambda x: x['join'])
+
+    total_sec = sum(s['seconds'] for s in day_sessions)
+    return jsonify({
+        'uid':        uid,
+        'date':       date_str,
+        'sessions':   day_sessions,
+        'total_sec':  total_sec,
+        'total_dur':  format_duration(total_sec) if total_sec else '0',
+        'count':      len(day_sessions),
+    })
 
 @flask_app.route('/api/members')
 @require_auth

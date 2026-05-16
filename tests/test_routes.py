@@ -214,3 +214,61 @@ def test_wrong_api_key_is_rejected(app, vb):
         assert r.status_code in (302, 401, 403)
     finally:
         vb.DASHBOARD_API_KEY = original
+
+
+# ── /api/timeline ─────────────────────────────────────────────────────────────
+
+def test_timeline_today_empty(owner_client):
+    """GET /api/timeline/<uid> for unknown uid returns empty sessions list."""
+    resp = owner_client.get('/api/timeline/999999?guild_id=999')
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['sessions'] == []
+    assert data['count'] == 0
+
+
+def test_timeline_invalid_date(owner_client):
+    """GET /api/timeline/<uid> with bad date returns 400."""
+    resp = owner_client.get('/api/timeline/111?guild_id=999&date=not-a-date')
+    assert resp.status_code == 400
+
+
+def test_timeline_missing_guild_id(owner_client):
+    """GET /api/timeline/<uid> without guild_id returns 400."""
+    resp = owner_client.get('/api/timeline/111')
+    assert resp.status_code == 400
+    data = resp.get_json()
+    assert 'guild_id' in data.get('error', '').lower()
+
+
+def test_timeline_unauthenticated(client):
+    """GET /api/timeline/<uid> without auth returns 401."""
+    resp = client.get('/api/timeline/111?guild_id=999')
+    assert resp.status_code == 401
+
+
+def test_timeline_with_session(owner_client, vb):
+    """GET /api/timeline/<uid> returns session data when history exists."""
+    import datetime as dt
+    today = dt.datetime.now(vb.THAI_TZ).strftime('%Y-%m-%d')
+    vb.session_history.append({
+        'guild_id': '999',
+        'uid': '111',
+        'channel': 'General',
+        'join': today + ' 10:00',
+        'leave': today + ' 11:00',
+        'seconds': 3600,
+    })
+    try:
+        resp = owner_client.get('/api/timeline/111?guild_id=999&date=' + today)
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data['count'] >= 1
+        assert data['total_sec'] >= 3600
+        assert any(s['channel'] == 'General' for s in data['sessions'])
+    finally:
+        # Clean up added session
+        vb.session_history[:] = [
+            s for s in vb.session_history
+            if not (s.get('guild_id') == '999' and s.get('uid') == '111' and s.get('channel') == 'General')
+        ]
