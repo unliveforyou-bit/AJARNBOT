@@ -70,6 +70,8 @@ if OUTBOUND_WEBHOOK_URL and not OUTBOUND_WEBHOOK_URL.startswith('https://'):
 # ===== Paths =====
 BASE_DIR     = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR     = os.environ.get('RAILWAY_VOLUME_MOUNT_PATH') or os.path.join(BASE_DIR, 'data')
+_vol = os.environ.get('RAILWAY_VOLUME_MOUNT_PATH')
+print(f'[DATA] storage → {DATA_DIR}  ({"persistent volume ✓" if _vol else "⚠ ephemeral — set RAILWAY_VOLUME_MOUNT_PATH"})')
 JOKES_FILE   = os.path.join(BASE_DIR, 'jokes.txt')
 TRIVIA_FILE  = os.path.join(BASE_DIR, 'trivia.txt')
 STATS_FILE   = os.path.join(DATA_DIR, 'voice_stats.json')
