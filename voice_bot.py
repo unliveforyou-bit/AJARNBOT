@@ -2197,7 +2197,7 @@ def api_votes_reset():
 _sheets_lock      = threading.Lock()
 _sheets_last_sync = None    # datetime string of last successful sync
 _sheets_last_err  = None    # last error message
-_sheets_notes     = {}      # {guild_id: {uid: note}} — imported from Notes tab
+_sheets_notes     = {}      # {guild_id: {uid: note}} — imported from Members tab
 
 def _get_gspread():
     """Return authenticated gspread client or None if not configured."""
@@ -2220,7 +2220,6 @@ def _get_gspread():
 def _ensure_tab(ss, title, header):
     """Get or create a worksheet tab with the given header row."""
     try:
-        import gspread
         ws = ss.worksheet(title)
     except Exception:
         ws = ss.add_worksheet(title=title, rows=5000, cols=max(len(header), 10))
@@ -2234,8 +2233,80 @@ def _guild_display_name(gid):
     guild_obj = client.get_guild(int(gid)) if gid.isdigit() else None
     return guild_obj.name if guild_obj else gid
 
+def _rgb(r, g, b):
+    """Convert 0-255 RGB to Sheets API float format."""
+    return {'red': r/255, 'green': g/255, 'blue': b/255}
+
+def _format_tab(ss, ws, tab_color_rgb, num_data_rows=0):
+    """
+    Apply beautiful formatting to a worksheet:
+    - Bold + colored header row with white text
+    - Freeze header row
+    - Alternating row colors
+    - Tab color
+    - Auto-resize columns
+    """
+    sid      = ws.id
+    num_cols = ws.col_count
+    end_row  = max(num_data_rows + 1, 2)
+
+    # Build base requests (always safe to run)
+    requests = [
+        # Freeze row 1
+        {'updateSheetProperties': {
+            'properties': {'sheetId': sid, 'gridProperties': {'frozenRowCount': 1}},
+            'fields': 'gridProperties.frozenRowCount',
+        }},
+        # Tab color
+        {'updateSheetProperties': {
+            'properties': {'sheetId': sid, 'tabColor': tab_color_rgb},
+            'fields': 'tabColor',
+        }},
+        # Header: bold, colored background, white text, center-aligned
+        {'repeatCell': {
+            'range': {'sheetId': sid, 'startRowIndex': 0, 'endRowIndex': 1,
+                      'startColumnIndex': 0, 'endColumnIndex': num_cols},
+            'cell': {'userEnteredFormat': {
+                'backgroundColor': tab_color_rgb,
+                'textFormat': {
+                    'bold': True, 'fontSize': 11,
+                    'foregroundColor': {'red': 1, 'green': 1, 'blue': 1},
+                },
+                'horizontalAlignment': 'CENTER',
+                'verticalAlignment': 'MIDDLE',
+            }},
+            'fields': 'userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)',
+        }},
+        # Auto-resize all columns
+        {'autoResizeDimensions': {
+            'dimensions': {'sheetId': sid, 'dimension': 'COLUMNS',
+                           'startIndex': 0, 'endIndex': num_cols},
+        }},
+    ]
+
+    # Banding (alternating rows) — skip if fails (already exists)
+    banding_req = {'addBanding': {
+        'bandedRange': {
+            'sheetId': sid,
+            'range': {'sheetId': sid, 'startRowIndex': 1, 'endRowIndex': end_row,
+                      'startColumnIndex': 0, 'endColumnIndex': num_cols},
+            'rowProperties': {
+                'firstBandColor':  {'red': 1.0, 'green': 1.0, 'blue': 1.0},
+                'secondBandColor': {'red': 0.94, 'green': 0.97, 'blue': 1.0},
+            },
+        },
+    }}
+    try:
+        ss.batch_update({'requests': requests + [banding_req]})
+    except Exception:
+        # Banding already exists on this sheet — run without it
+        try:
+            ss.batch_update({'requests': requests})
+        except Exception as e:
+            log(f'sheets: format warning: {e}')
+
 def sync_to_sheets(target_guild_id=None):
-    """Push bot data to Google Sheets (all tabs). Returns result dict."""
+    """Push bot data to Google Sheets (all tabs + formatting). Returns result dict."""
     global _sheets_last_sync, _sheets_last_err
     with _sheets_lock:
         gc, err = _get_gspread()
@@ -2243,10 +2314,8 @@ def sync_to_sheets(target_guild_id=None):
             _sheets_last_err = err
             return {'ok': False, 'error': err}
         try:
-            import gspread
             ss = gc.open_by_key(GOOGLE_SHEET_ID)
 
-            # Determine which guilds to sync
             if target_guild_id:
                 guild_ids = [str(target_guild_id)]
             else:
@@ -2259,7 +2328,6 @@ def sync_to_sheets(target_guild_id=None):
             total_rows = 0
             for gid in guild_ids:
                 gname = _guild_display_name(gid)
-                # Use guild name as tab suffix if multiple guilds
                 sfx = f' — {gname}' if len(guild_ids) > 1 else ''
 
                 ud  = user_daily.get(gid, {})
@@ -2267,8 +2335,8 @@ def sync_to_sheets(target_guild_id=None):
                 du  = daily_unique.get(gid, {})
                 da  = daily_activity.get(gid, {})
 
-                # ── Tab 1: Sessions ───────────────────────────────────────────
-                tab_sess = _ensure_tab(ss, f'Sessions{sfx}',
+                # ── Tab 1: 📋 Sessions (Blue) ─────────────────────────────────
+                tab_sess = _ensure_tab(ss, f'📋 Sessions{sfx}',
                     ['Guild', 'Member', 'Channel', 'Join', 'Leave', 'Duration (min)', 'Seconds'])
                 sess_rows = [
                     [s.get('guild_id',''), s.get('name',''), s.get('channel',''),
@@ -2280,9 +2348,10 @@ def sync_to_sheets(target_guild_id=None):
                     tab_sess.resize(rows=len(sess_rows) + 1)
                     tab_sess.update('A2', sess_rows)
                     total_rows += len(sess_rows)
+                _format_tab(ss, tab_sess, _rgb(66, 133, 244), len(sess_rows))  # Google Blue
 
-                # ── Tab 2: Leaderboard ────────────────────────────────────────
-                tab_lb = _ensure_tab(ss, f'Leaderboard{sfx}',
+                # ── Tab 2: 🏆 Leaderboard (Gold) ──────────────────────────────
+                tab_lb = _ensure_tab(ss, f'🏆 Leaderboard{sfx}',
                     ['Rank', 'Name', 'Total Hours', 'Total Seconds', 'Sessions',
                      'Streak Max', 'First Seen', 'Last Seen'])
                 all_uids = set(ud.keys()) | set(ws_.keys())
@@ -2308,18 +2377,20 @@ def sync_to_sheets(target_guild_id=None):
                     tab_lb.resize(rows=len(lb_rows) + 1)
                     tab_lb.update('A2', lb_rows)
                     total_rows += len(lb_rows)
+                _format_tab(ss, tab_lb, _rgb(251, 188, 4), len(lb_rows))  # Google Yellow
 
-                # ── Tab 3: DAU ────────────────────────────────────────────────
+                # ── Tab 3: 📈 DAU (Green) ─────────────────────────────────────
                 if du:
-                    tab_dau = _ensure_tab(ss, f'DAU{sfx}', ['Date', 'DAU', 'Total Joins'])
+                    tab_dau = _ensure_tab(ss, f'📈 DAU{sfx}', ['Date', 'DAU', 'Total Joins'])
                     dates    = sorted(du.keys())
                     dau_rows = [[d, len(du.get(d, [])), da.get(d, 0)] for d in dates]
                     tab_dau.resize(rows=len(dau_rows) + 1)
                     tab_dau.update('A2', dau_rows)
                     total_rows += len(dau_rows)
+                    _format_tab(ss, tab_dau, _rgb(52, 168, 83), len(dau_rows))  # Google Green
 
-                # ── Tab 4: Members ────────────────────────────────────────────
-                tab_mem = _ensure_tab(ss, f'Members{sfx}',
+                # ── Tab 4: 👥 Members (Purple) ────────────────────────────────
+                tab_mem = _ensure_tab(ss, f'👥 Members{sfx}',
                     ['Member ID', 'Name', 'Total Hours', 'Sessions',
                      'Streak Max', 'Active Days', 'First Seen', 'Last Seen', 'Note'])
                 notes_g = _sheets_notes.get(gid, {})
@@ -2341,6 +2412,37 @@ def sync_to_sheets(target_guild_id=None):
                     tab_mem.resize(rows=len(mem_rows) + 1)
                     tab_mem.update('A2', mem_rows)
                     total_rows += len(mem_rows)
+                _format_tab(ss, tab_mem, _rgb(154, 109, 234), len(mem_rows))  # Purple
+
+                # ── Tab 5: ⭐ Summary (Red) ────────────────────────────────────
+                tab_sum = _ensure_tab(ss, f'⭐ Summary{sfx}', ['Metric', 'Value'])
+                now_str = datetime.now(THAI_TZ).strftime('%Y-%m-%d %H:%M')
+                total_hours = round(sum(ud.get(u, {}).get('alltime_seconds', 0)
+                                        for u in ud) / 3600, 1)
+                top3 = lb_data[:3] if lb_data else []
+                top3_str = ' / '.join(d['name'] for d in top3) if top3 else '-'
+                avg_sess_sec = (
+                    sum(s.get('seconds', 0) for s in session_history if s.get('guild_id') == gid)
+                    // max(len([s for s in session_history if s.get('guild_id') == gid]), 1)
+                )
+                dau_today = len(du.get(datetime.now(THAI_TZ).strftime('%Y-%m-%d'), []))
+                sum_rows = [
+                    ['Server', gname],
+                    ['Last Sync', now_str],
+                    [''],
+                    ['Total Members', len(set(ud.keys()) | set(ws_.keys()))],
+                    ['Total Sessions', len([s for s in session_history if s.get('guild_id') == gid])],
+                    ['Total Voice Hours', total_hours],
+                    ['Avg Session (min)', round(avg_sess_sec / 60, 1)],
+                    ['DAU Today', dau_today],
+                    [''],
+                    ['🥇 #1 All-time', lb_data[0]['name'] + f' ({lb_data[0]["hours"]}h)' if lb_data else '-'],
+                    ['🥈 #2 All-time', lb_data[1]['name'] + f' ({lb_data[1]["hours"]}h)' if len(lb_data) > 1 else '-'],
+                    ['🥉 #3 All-time', lb_data[2]['name'] + f' ({lb_data[2]["hours"]}h)' if len(lb_data) > 2 else '-'],
+                ]
+                tab_sum.resize(rows=len(sum_rows) + 1)
+                tab_sum.update('A2', sum_rows)
+                _format_tab(ss, tab_sum, _rgb(234, 67, 53), len(sum_rows))  # Google Red
 
             _sheets_last_sync = datetime.now(THAI_TZ).strftime('%Y-%m-%d %H:%M')
             _sheets_last_err  = None

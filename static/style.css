@@ -887,6 +887,16 @@ body.light .history-search-wrap { background:var(--surface); }
 .sheets-link:hover { background:rgba(35,165,89,.2); }
 .sheets-sync-info { font-size:13px; }
 .card-icon.green { background:rgba(35,165,89,.15); color:#23a559; }
+.looker-guide { margin-top:2px; }
+.looker-guide summary { list-style:none; padding:4px 0; }
+.looker-guide summary::-webkit-details-marker { display:none; }
+.looker-steps { display:flex; flex-direction:column; gap:10px; margin-top:12px; }
+.looker-step { display:flex; align-items:flex-start; gap:10px; font-size:13px; }
+.looker-num {
+  min-width:22px; height:22px; border-radius:50%; background:var(--accent);
+  color:#fff; font-size:11px; font-weight:700; display:flex; align-items:center;
+  justify-content:center; flex-shrink:0; margin-top:1px;
+}
 
 /* ── Members panel ── */
 .members-search-wrap {
