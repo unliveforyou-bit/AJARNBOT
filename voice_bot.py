@@ -102,8 +102,9 @@ bot_config = {
     'announce_stream':          True,
     'announce_video':           True,
     'send_content':             True,
-    'send_jokes':               True,
-    'send_trivia':              True,
+    'send_jokes':               False,
+    'send_trivia':              False,
+    'send_ready_message':       True,
     'joke_delay':               15,
     'trivia_delay':             15,
     'mute_cooldown_sec':        3,
@@ -141,7 +142,7 @@ GUILD_ADMIN_KEYS = {
     'channel_voice', 'channel_content', 'channel_stats',
     'announce_join', 'announce_leave', 'announce_move',
     'announce_mute', 'announce_deaf', 'announce_stream', 'announce_video',
-    'send_content', 'send_jokes', 'send_trivia',
+    'send_content', 'send_jokes', 'send_trivia', 'send_ready_message',
     'joke_delay', 'trivia_delay', 'content_interval',
     'summary_hour', 'joke_downvote_threshold',
     'spam_max_events', 'spam_window_sec', 'mute_cooldown_sec',
@@ -1097,6 +1098,18 @@ async def on_ready():
     save_event_counts_task.start()   # ← save event_counts every 5 min
     evict_stale_trackers.start()     # ← evict stale rate-limit dicts every 10 min
     await client.tree.sync()
+    # ── Ready message ──────────────────────────────────────────────────────────
+    for guild in client.guilds:
+        if get_gc(guild.id, 'send_ready_message', True):
+            ch = get_guild_ch(str(guild.id), 'voice')
+            if ch:
+                try:
+                    await ch.send(
+                        f'🤖 **AjarnBot พร้อมใช้งานแล้ว!** (v{APP_VERSION})\n'
+                        f'ระบบออนไลน์และพร้อมบันทึก Voice Activity แล้ว'
+                    )
+                except Exception:
+                    pass
 
 # ── Feature 2: Welcome message เมื่อ bot เข้า server ใหม่ ─────────────────────
 @client.event

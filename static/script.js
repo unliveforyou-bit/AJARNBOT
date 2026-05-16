@@ -52,8 +52,9 @@ function updateClock(){
 function applyConfig(c){
   TOGGLES.forEach(t=>{const el=document.getElementById('toggle_'+t.key);if(el)el.checked=!!c[t.key];});
   const sc=document.getElementById('toggle_send_content');if(sc)sc.checked=!!c.send_content;
-  const sj=document.getElementById('toggle_send_jokes');if(sj)sj.checked=c.send_jokes!==false;
-  const st=document.getElementById('toggle_send_trivia');if(st)st.checked=c.send_trivia!==false;
+  const sj=document.getElementById('toggle_send_jokes');if(sj)sj.checked=!!c.send_jokes;
+  const st=document.getElementById('toggle_send_trivia');if(st)st.checked=!!c.send_trivia;
+  const sr=document.getElementById('toggle_send_ready_message');if(sr)sr.checked=c.send_ready_message!==false;
   NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
   SPAM_NUMBERS.forEach(n=>{const el=document.getElementById('num_'+n.key);if(el)el.value=c[n.key]??0;});
   // channel dropdowns populated by loadChannelDropdowns()

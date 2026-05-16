@@ -218,6 +218,13 @@
               <span class="slider"></span>
             </label>
           </div>
+          <div class="toggle-item">
+            <span class="toggle-label" id="lbl_send_ready_message">แจ้งพร้อมใช้งานตอนเปิด</span>
+            <label class="switch">
+              <input type="checkbox" id="toggle_send_ready_message" aria-labelledby="lbl_send_ready_message" onchange="toggleConfig('send_ready_message',this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
         </div>
         <div class="config-grid" id="numGrid"></div>
         <div class="btn-row"><button class="btn btn-primary" onclick="saveNums(this)">บันทึก</button></div>
