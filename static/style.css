@@ -874,6 +874,20 @@ body.light .sort-btn.active { background:rgba(88,101,242,.12); }
 .history-search::placeholder { color:var(--muted); }
 body.light .history-search-wrap { background:var(--surface); }
 
+/* ── Google Sheets panel ── */
+.sheets-status-wrap { font-size:13px; }
+.sheets-not-configured { color:var(--muted); font-size:13px; line-height:1.6; }
+.sheets-info { display:flex; flex-direction:column; gap:8px; }
+.sheets-link {
+  display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:600;
+  color:var(--text); text-decoration:none; padding:8px 12px;
+  background:rgba(35,165,89,.1); border:1px solid rgba(35,165,89,.25);
+  border-radius:var(--radius-sm); width:fit-content; transition:background .15s;
+}
+.sheets-link:hover { background:rgba(35,165,89,.2); }
+.sheets-sync-info { font-size:13px; }
+.card-icon.green { background:rgba(35,165,89,.15); color:#23a559; }
+
 /* ── Members panel ── */
 .members-search-wrap {
   position:relative; display:flex; align-items:center;

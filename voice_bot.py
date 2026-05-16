@@ -45,6 +45,8 @@ DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')
 DASHBOARD_BASE_URL   = os.environ.get('DASHBOARD_BASE_URL', 'https://ajarnbot.up.railway.app')
 # OWNER_IDS: comma-separated Discord user IDs who have full access (global config)
 OWNER_IDS = {uid.strip() for uid in os.environ.get('OWNER_IDS', '').split(',') if uid.strip()}
+GOOGLE_SHEET_ID          = os.environ.get('GOOGLE_SHEET_ID', '')
+GOOGLE_SHEETS_CREDENTIALS = os.environ.get('GOOGLE_SHEETS_CREDENTIALS', '')  # JSON string
 
 # ===== Startup config validation =====
 _FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
@@ -2105,6 +2107,7 @@ def api_profile(uid):
                     'first_seen':       ud.get('first_seen'),
                     'last_seen':        ud.get('last_seen'),
                     'avatar_url':       avatar_url,
+                    'note':             _sheets_notes.get(str(guild_id), {}).get(uid, ''),
                     })
 
 @flask_app.route('/api/members')
@@ -2189,6 +2192,254 @@ def api_votes_reset():
     joke_votes.clear()
     save_votes()
     return jsonify({'ok': True})
+
+# ── Google Sheets Integration ─────────────────────────────────────────────────
+_sheets_lock      = threading.Lock()
+_sheets_last_sync = None    # datetime string of last successful sync
+_sheets_last_err  = None    # last error message
+_sheets_notes     = {}      # {guild_id: {uid: note}} — imported from Notes tab
+
+def _get_gspread():
+    """Return authenticated gspread client or None if not configured."""
+    if not GOOGLE_SHEET_ID or not GOOGLE_SHEETS_CREDENTIALS:
+        return None, 'Google Sheets not configured (GOOGLE_SHEET_ID / GOOGLE_SHEETS_CREDENTIALS missing)'
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials as SACredentials
+        creds_dict = json.loads(GOOGLE_SHEETS_CREDENTIALS)
+        scopes = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive',
+        ]
+        creds = SACredentials.from_service_account_info(creds_dict, scopes=scopes)
+        gc = gspread.authorize(creds)
+        return gc, None
+    except Exception as e:
+        return None, str(e)
+
+def _ensure_tab(ss, title, header):
+    """Get or create a worksheet tab with the given header row."""
+    try:
+        import gspread
+        ws = ss.worksheet(title)
+    except Exception:
+        ws = ss.add_worksheet(title=title, rows=5000, cols=max(len(header), 10))
+    current_header = ws.row_values(1)
+    if current_header != header:
+        ws.update('A1', [header])
+    return ws
+
+def _guild_display_name(gid):
+    """Return readable guild name for use as sheet tab suffix."""
+    guild_obj = client.get_guild(int(gid)) if gid.isdigit() else None
+    return guild_obj.name if guild_obj else gid
+
+def sync_to_sheets(target_guild_id=None):
+    """Push bot data to Google Sheets (all tabs). Returns result dict."""
+    global _sheets_last_sync, _sheets_last_err
+    with _sheets_lock:
+        gc, err = _get_gspread()
+        if err:
+            _sheets_last_err = err
+            return {'ok': False, 'error': err}
+        try:
+            import gspread
+            ss = gc.open_by_key(GOOGLE_SHEET_ID)
+
+            # Determine which guilds to sync
+            if target_guild_id:
+                guild_ids = [str(target_guild_id)]
+            else:
+                guild_ids = sorted(set(
+                    list(user_daily.keys()) +
+                    list(weekly_stats.keys()) +
+                    list(daily_unique.keys())
+                ))
+
+            total_rows = 0
+            for gid in guild_ids:
+                gname = _guild_display_name(gid)
+                # Use guild name as tab suffix if multiple guilds
+                sfx = f' — {gname}' if len(guild_ids) > 1 else ''
+
+                ud  = user_daily.get(gid, {})
+                ws_ = weekly_stats.get(gid, {})
+                du  = daily_unique.get(gid, {})
+                da  = daily_activity.get(gid, {})
+
+                # ── Tab 1: Sessions ───────────────────────────────────────────
+                tab_sess = _ensure_tab(ss, f'Sessions{sfx}',
+                    ['Guild', 'Member', 'Channel', 'Join', 'Leave', 'Duration (min)', 'Seconds'])
+                sess_rows = [
+                    [s.get('guild_id',''), s.get('name',''), s.get('channel',''),
+                     s.get('join',''), s.get('leave',''),
+                     round(s.get('seconds', 0) / 60, 1), s.get('seconds', 0)]
+                    for s in session_history if s.get('guild_id') == gid
+                ]
+                if sess_rows:
+                    tab_sess.resize(rows=len(sess_rows) + 1)
+                    tab_sess.update('A2', sess_rows)
+                    total_rows += len(sess_rows)
+
+                # ── Tab 2: Leaderboard ────────────────────────────────────────
+                tab_lb = _ensure_tab(ss, f'Leaderboard{sfx}',
+                    ['Rank', 'Name', 'Total Hours', 'Total Seconds', 'Sessions',
+                     'Streak Max', 'First Seen', 'Last Seen'])
+                all_uids = set(ud.keys()) | set(ws_.keys())
+                lb_data  = []
+                for uid_str in all_uids:
+                    udata = ud.get(uid_str, {})
+                    wdata = ws_.get(uid_str, {})
+                    alltime_sec = udata.get('alltime_seconds', wdata.get('seconds', 0))
+                    lb_data.append({
+                        'name':       udata.get('name') or wdata.get('name') or 'Unknown',
+                        'hours':      round(alltime_sec / 3600, 2),
+                        'seconds':    alltime_sec,
+                        'sessions':   udata.get('session_count', 0),
+                        'streak':     udata.get('streak_max', 0),
+                        'first_seen': udata.get('first_seen', ''),
+                        'last_seen':  udata.get('last_seen', ''),
+                    })
+                lb_data.sort(key=lambda x: x['seconds'], reverse=True)
+                lb_rows = [[i+1, d['name'], d['hours'], d['seconds'],
+                             d['sessions'], d['streak'], d['first_seen'], d['last_seen']]
+                           for i, d in enumerate(lb_data)]
+                if lb_rows:
+                    tab_lb.resize(rows=len(lb_rows) + 1)
+                    tab_lb.update('A2', lb_rows)
+                    total_rows += len(lb_rows)
+
+                # ── Tab 3: DAU ────────────────────────────────────────────────
+                if du:
+                    tab_dau = _ensure_tab(ss, f'DAU{sfx}', ['Date', 'DAU', 'Total Joins'])
+                    dates    = sorted(du.keys())
+                    dau_rows = [[d, len(du.get(d, [])), da.get(d, 0)] for d in dates]
+                    tab_dau.resize(rows=len(dau_rows) + 1)
+                    tab_dau.update('A2', dau_rows)
+                    total_rows += len(dau_rows)
+
+                # ── Tab 4: Members ────────────────────────────────────────────
+                tab_mem = _ensure_tab(ss, f'Members{sfx}',
+                    ['Member ID', 'Name', 'Total Hours', 'Sessions',
+                     'Streak Max', 'Active Days', 'First Seen', 'Last Seen', 'Note'])
+                notes_g = _sheets_notes.get(gid, {})
+                mem_rows = []
+                for uid_str, udata in ud.items():
+                    alltime_sec = udata.get('alltime_seconds', 0)
+                    mem_rows.append([
+                        uid_str,
+                        udata.get('name', ''),
+                        round(alltime_sec / 3600, 2),
+                        udata.get('session_count', 0),
+                        udata.get('streak_max', 0),
+                        len(udata.get('dates', {})),
+                        udata.get('first_seen', ''),
+                        udata.get('last_seen', ''),
+                        notes_g.get(uid_str, ''),
+                    ])
+                if mem_rows:
+                    tab_mem.resize(rows=len(mem_rows) + 1)
+                    tab_mem.update('A2', mem_rows)
+                    total_rows += len(mem_rows)
+
+            _sheets_last_sync = datetime.now(THAI_TZ).strftime('%Y-%m-%d %H:%M')
+            _sheets_last_err  = None
+            log(f'sheets: sync ok — {total_rows} rows across {len(guild_ids)} guild(s)')
+            return {'ok': True, 'synced_at': _sheets_last_sync,
+                    'rows': total_rows, 'guilds': len(guild_ids)}
+
+        except Exception as e:
+            _sheets_last_err = str(e)
+            log(f'sheets: sync error: {e}')
+            return {'ok': False, 'error': str(e)}
+
+def import_from_sheets(target_guild_id=None):
+    """Read Notes tab from Google Sheets → _sheets_notes dict."""
+    global _sheets_notes
+    with _sheets_lock:
+        gc, err = _get_gspread()
+        if err:
+            return {'ok': False, 'error': err}
+        try:
+            import gspread
+            ss = gc.open_by_key(GOOGLE_SHEET_ID)
+
+            guild_ids = [str(target_guild_id)] if target_guild_id else sorted(set(
+                list(user_daily.keys()) + list(weekly_stats.keys())
+            ))
+            imported = 0
+            for gid in guild_ids:
+                sfx   = f' — {_guild_display_name(gid)}' if len(guild_ids) > 1 else ''
+                title = f'Members{sfx}'
+                try:
+                    ws = ss.worksheet(title)
+                except Exception:
+                    continue
+                rows = ws.get_all_values()
+                if len(rows) < 2:
+                    continue
+                header = rows[0]
+                try:
+                    id_col   = header.index('Member ID')
+                    note_col = header.index('Note')
+                except ValueError:
+                    continue
+                notes_g = {}
+                for row in rows[1:]:
+                    uid_str = row[id_col].strip() if id_col < len(row) else ''
+                    note    = row[note_col].strip() if note_col < len(row) else ''
+                    if uid_str and note:
+                        notes_g[uid_str] = note
+                        imported += 1
+                _sheets_notes[gid] = notes_g
+            return {'ok': True, 'imported_notes': imported}
+        except Exception as e:
+            log(f'sheets: import error: {e}')
+            return {'ok': False, 'error': str(e)}
+
+def _sheets_bg_sync():
+    """Background thread: sync to sheets every 6 hours."""
+    import time
+    while True:
+        time.sleep(6 * 3600)
+        if GOOGLE_SHEET_ID and GOOGLE_SHEETS_CREDENTIALS:
+            try:
+                sync_to_sheets()
+            except Exception as e:
+                log(f'sheets: bg sync error: {e}')
+
+_sheets_bg_thread = threading.Thread(target=_sheets_bg_sync, daemon=True)
+_sheets_bg_thread.start()
+
+# ── Sheets API endpoints ──────────────────────────────────────────────────────
+@flask_app.route('/api/sheets/status')
+@require_auth
+def api_sheets_status():
+    configured = bool(GOOGLE_SHEET_ID and GOOGLE_SHEETS_CREDENTIALS)
+    sheet_url  = f'https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}' if GOOGLE_SHEET_ID else ''
+    return jsonify({
+        'configured':  configured,
+        'sheet_id':    GOOGLE_SHEET_ID if configured else '',
+        'sheet_url':   sheet_url,
+        'last_sync':   _sheets_last_sync,
+        'last_error':  _sheets_last_err,
+    })
+
+@flask_app.route('/api/sheets/sync', methods=['POST'])
+@require_auth
+def api_sheets_sync():
+    data     = request.get_json(silent=True) or {}
+    guild_id = str(data.get('guild_id') or flask_session.get('current_guild_id') or '').strip()
+    result   = sync_to_sheets(guild_id or None)
+    return jsonify(result), (200 if result['ok'] else 500)
+
+@flask_app.route('/api/sheets/import', methods=['POST'])
+@require_auth
+def api_sheets_import():
+    data     = request.get_json(silent=True) or {}
+    guild_id = str(data.get('guild_id') or flask_session.get('current_guild_id') or '').strip()
+    result   = import_from_sheets(guild_id or None)
+    return jsonify(result), (200 if result['ok'] else 500)
 
 # ── Feature 6: Export CSV ────────────────────────────────────────────────────
 @flask_app.route('/api/export/csv')

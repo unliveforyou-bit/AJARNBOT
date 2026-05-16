@@ -125,6 +125,7 @@ async function load(){
   if(d.streak_max>0)badges.push('<span class="badge yellow">streak max '+d.streak_max+' วัน</span>');
   if(d.alltime_seconds)badges.push('<span class="badge green">'+fmt(d.alltime_seconds)+' ทั้งหมด</span>');
   if(d.session_count)badges.push('<span class="badge blue">'+d.session_count+' sessions</span>');
+  if(d.note)badges.push('<span class="badge blue" title="Note จาก Google Sheet">📝 '+esc(d.note)+'</span>');
   document.getElementById('heroBadges').innerHTML=badges.join('');
 
   // Stat boxes

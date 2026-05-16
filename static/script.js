@@ -163,7 +163,7 @@ async function switchGuild(guildId){
     // reload all data panels
     refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
-    loadDowHeatmap();loadHistogram();loadMembers();
+    loadDowHeatmap();loadHistogram();loadMembers();loadSheetsStatus();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -748,6 +748,54 @@ function filterHistory(q){
     +'<td>'+escHTML(s.duration)+'</td></tr>').join('');
 }
 
+// ── Google Sheets ─────────────────────────────────────────────────────────────
+async function loadSheetsStatus(){
+  const wrap=document.getElementById('sheetsStatus');if(!wrap)return;
+  let d;try{const r=await fetch('/api/sheets/status');if(!r.ok)throw new Error(r.status);d=await r.json();}
+  catch(e){wrap.innerHTML='<span class="empty-msg">โหลด status ไม่ได้</span>';return;}
+  if(!d.configured){
+    wrap.innerHTML='<div class="sheets-not-configured">'
+      +'<i class="ph-bold ph-warning" style="color:var(--yellow)"></i>'
+      +' ยังไม่ได้ตั้งค่า — ต้องเพิ่ม <code>GOOGLE_SHEET_ID</code> และ <code>GOOGLE_SHEETS_CREDENTIALS</code> ใน Railway environment variables'
+      +'<br><a href="https://docs.google.com/spreadsheets" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px;margin-top:6px;display:inline-block">วิธีตั้งค่า →</a>'
+      +'</div>';
+    return;
+  }
+  const syncInfo=d.last_sync
+    ?'<span style="color:var(--green)"><i class="ph-bold ph-check-circle"></i> sync ล่าสุด: '+escHTML(d.last_sync)+'</span>'
+    :'<span style="color:var(--muted)">ยังไม่เคย sync</span>';
+  const errInfo=d.last_error
+    ?'<div style="color:var(--red);font-size:12px;margin-top:4px"><i class="ph-bold ph-x-circle"></i> '+escHTML(d.last_error)+'</div>':''  ;
+  wrap.innerHTML='<div class="sheets-info">'
+    +'<a class="sheets-link" href="'+escHTML(d.sheet_url)+'" target="_blank" rel="noopener">'
+    +'<i class="ph-bold ph-file-xls" style="color:var(--green)"></i> เปิด Google Sheet</a>'
+    +'<div class="sheets-sync-info">'+syncInfo+errInfo+'</div>'
+    +'<div class="sheets-note" style="font-size:11px;color:var(--muted);margin-top:8px">'
+    +'Auto-sync ทุก 6 ชั่วโมง · <b>Import Notes</b> อ่านคอลัมน์ Note ใน Members tab กลับมาแสดงใน Profile'
+    +'</div></div>';
+}
+async function syncToSheets(btn){
+  withLoading(btn,async()=>{
+    try{
+      const r=await fetch('/api/sheets/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId||null})});
+      const d=await r.json();
+      if(d.ok){showToast('Sync สำเร็จ · '+d.rows+' rows · '+d.synced_at);}
+      else{showToast('Sync ไม่สำเร็จ: '+(d.error||'unknown'),true);}
+      loadSheetsStatus();
+    }catch(e){showToast('Sync error',true);}
+  });
+}
+async function importFromSheets(btn){
+  withLoading(btn,async()=>{
+    try{
+      const r=await fetch('/api/sheets/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({guild_id:currentGuildId||null})});
+      const d=await r.json();
+      if(d.ok){showToast('Import สำเร็จ · '+d.imported_notes+' notes');}
+      else{showToast('Import ไม่สำเร็จ: '+(d.error||'unknown'),true);}
+    }catch(e){showToast('Import error',true);}
+  });
+}
+
 // ── Member browser ────────────────────────────────────────────────────────────
 let _membersCache=[];
 async function loadMembers(){
@@ -826,7 +874,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSidebar();});
 buildUI();loadConfig();
 refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
 loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();
-loadDowHeatmap();loadHistogram();loadMembers();loadLogs();
+loadDowHeatmap();loadHistogram();loadMembers();loadSheetsStatus();loadLogs();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
 // Pause polling when tab is hidden to save resources

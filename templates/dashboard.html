@@ -49,6 +49,7 @@
       <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
       <li><a href="#ct-inactive-section"><i class="ph-bold ph-user-minus" aria-hidden="true"></i> Inactive Users</a></li>
       <li><a href="#ct-histogram-section"><i class="ph-bold ph-chart-bar-horizontal" aria-hidden="true"></i> Session Length</a></li>
+      <li><a href="#ct-sheets-section"><i class="ph-bold ph-file-xls" aria-hidden="true"></i> Google Sheets</a></li>
       <li><a href="#ct-members-section"><i class="ph-bold ph-users" aria-hidden="true"></i> สมาชิกทั้งหมด</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
       <li><a href="#ct-channel-section"><i class="ph-bold ph-speaker-high" aria-hidden="true"></i> Channel Activity</a></li>
@@ -455,7 +456,24 @@
       </div>
     </section>
 
-    <!-- 12. Member Browser -->
+    <!-- 12. Google Sheets -->
+    <section class="card" id="ct-sheets-section" aria-labelledby="ct-sheets">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-file-xls"></i></div>
+        <h2 class="card-title" id="ct-sheets">Google Sheets Sync</h2>
+        <div style="display:flex;gap:6px;margin-left:auto">
+          <button class="btn btn-secondary" style="height:30px;padding:0 12px;font-size:12px" onclick="importFromSheets(this)" title="อ่าน Notes จาก Sheet → Bot"><i class="ph-bold ph-arrow-square-in" aria-hidden="true"></i> Import Notes</button>
+          <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px" onclick="syncToSheets(this)"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Sync Now</button>
+        </div>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="sheetsStatus" class="sheets-status-wrap">
+          <span class="empty-msg">กำลังโหลด...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 13. Member Browser -->
     <section class="card" id="ct-members-section" aria-labelledby="ct-members">
       <div class="card-header">
         <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-users"></i></div>
