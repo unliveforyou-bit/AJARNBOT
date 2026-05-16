@@ -8,7 +8,7 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 ![discord.py](https://img.shields.io/badge/discord.py-2.3+-5865F2?style=flat&logo=discord&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.0+-000000?style=flat&logo=flask&logoColor=white)
 ![Railway](https://img.shields.io/badge/Deploy-Railway-0B0D0E?style=flat&logo=railway&logoColor=white)
-![Version](https://img.shields.io/badge/Version-2.8.0-58a6ff?style=flat)
+![Version](https://img.shields.io/badge/Version-3.1.0-58a6ff?style=flat)
 ![Tests](https://img.shields.io/badge/Tests-93%20passed-3fb950?style=flat)
 
 ---
@@ -73,11 +73,14 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 - **Discord OAuth2** — ทางหลัก ทุกคนใช้ Discord account login ได้
 - **Password fallback** — สำหรับ owner เท่านั้น (ตั้ง `DASHBOARD_PASSWORD`)
 - **API Key** support — `X-API-Key` header สำหรับ external/programmatic access
-- XSS protection — Jinja2 auto-escaping (ไม่ใช้ `| safe` บน user-controlled data)
-- CSRF token validation บน login form (Flask-WTF)
-- Atomic JSON writes — `tempfile` + `os.replace()` ป้องกัน file corruption
-- CSRF state validation บน OAuth2 flow
-- Rate limiting บน Discord commands (30 วินาที cooldown)
+- **CSRF protection** — Flask-WTF token บน login form + `X-CSRFToken` header สำหรับ AJAX POST ทุกตัว
+- **XSS protection** — Jinja2 auto-escaping + `escHTML()` ใน JS สำหรับ `innerHTML` ทุกจุด
+- **Atomic JSON writes** — `tempfile` + `os.replace()` ป้องกัน file corruption
+- **OAuth2 state nonce** — สร้าง + consume single-use — ป้องกัน CSRF + replay attack
+- **Rate limiting** — `/login` POST จำกัด 5 req/min/IP (flask-limiter, fallback gracefully)
+- **Security headers** — `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy`, `Referrer-Policy`
+- **Session lifetime** — หมดอายุ 24 ชั่วโมง
+- **Stale entitlement check** — guild-config mutation re-verifies bot ยังอยู่ใน guild
 
 ### ⚙️ System
 - `/health` endpoint สำหรับ uptime monitoring (UptimeRobot, BetterStack)
@@ -208,7 +211,9 @@ AJARNBOT/
 | `GET /api/guilds` | ✅ | รายชื่อ Discord servers |
 | `GET /api/my-guilds` | ✅ | Guilds ที่ user เป็น admin + bot อยู่ |
 | `GET /api/export/csv` | ✅ | ดาวน์โหลด session history เป็น CSV |
-| `GET /api/logs` | ✅ | Log ล่าสุด 100 บรรทัด |
+| `GET /api/health` | 🔑 | Bot health check พร้อมรายละเอียด (auth required) |
+| `GET /api/csrf-token` | ✅ | รับ CSRF token สำหรับ AJAX POST |
+| `GET /api/logs` | 👑 | Log ล่าสุด 100 บรรทัด (owner only) |
 | `GET /api/config` | ✅ | Global bot config |
 | `POST /api/config` | 👑 | แก้ global config (owner only) |
 | `GET /api/guild-config` | ✅ | Per-guild config |
@@ -237,7 +242,10 @@ AJARNBOT/
 discord.py>=2.3.0
 flask>=3.0.0
 flask-wtf>=1.2.0
+flask-limiter>=3.5.0
 tzdata>=2024.1
+gspread>=6.0.0
+google-auth>=2.0.0
 ```
 
 ไม่มี dependency ภายนอกอื่นนอกจากนี้ — ใช้ Python stdlib ทั้งหมด
@@ -266,6 +274,43 @@ Python ถูกสร้างโดยใคร|Guido van Rossum
 ---
 
 ## 📋 Changelog
+
+### v3.1.0 — Performance & Refactor
+> `HEAD` · 2026-05-17
+
+**⚡ Performance**
+- **Notion N+1 batch fix** — `_notion_bulk_find_pages()` รวม OR-filter สูงสุด 100 uid ต่อ request แทนที่ N HTTP calls ต่อ guild
+- **Leaderboard cache 60s** — `_ldb_cache` TTL 60 วินาที ลด session_history scan ซ้ำ
+- **Retention cache 5min** — `_ret_cache` TTL 300 วินาที
+
+**🔒 Security**
+- **Rate limiting** — `/login` POST จำกัด 5 req/min/IP ผ่าน flask-limiter (graceful fallback ถ้า lib ไม่ได้ install)
+- **OAuth state replay prevention** — consume `oauth_state` nonce ทันทีหลัง validate ผ่าน
+- **Stale entitlement check** — guild-config POST re-verify bot ยังอยู่ใน guild ก่อน mutate
+
+**🛠️ Refactor**
+- `on_voice_state_update` split → `_handle_voice_join`, `_handle_voice_leave`, `_handle_voice_move`
+- `sync_to_sheets` split → 5 helper functions (sessions / leaderboard / dau / members / summary tab)
+- `log()` → `logging.handlers.RotatingFileHandler` (10 MB × 5 files) — ไม่เปิดไฟล์ทุก call
+
+---
+
+### v3.0.0 — Security Hardening
+> `c7e0e97` · 2026-05-16
+
+**🔒 Security (CRITICAL fixes)**
+- **CSRF protection** — `X-CSRFToken` header บน AJAX POST ทุกตัว ผ่าน `before_request` hook; JS `_post()` helper inject token อัตโนมัติ; `/api/csrf-token` endpoint
+- **IDOR prevention** — `/api/profile` กรอง session ด้วย uid เท่านั้น (ไม่ใช้ name); `/api/channels` เพิ่ม `require_guild_access()` check
+- **Security headers** — `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `CSP`, `Referrer-Policy` ผ่าน `after_request` hook
+- **Guild ID validation** — `_validate_snowflake()` ตรวจรูปแบบ ป้องกัน injection; `_action_guild_id_or_error()` บังคับ guild_id สำหรับ non-owner
+- **Thread-safety** — เพิ่ม `_lock_spam`, `_lock_mute_cooldown`; `load_*()` functions hold lock ขณะ mutate global
+- **Atomic DAU append** — `_lock_daily_unique` ครอบทั้ง check+append+save
+- **`/health` stripped** — แสดงเฉพาะ `{ok: bool}`; รายละเอียดย้ายไป `/api/health` (auth required)
+- **`/api/logs`** — เปลี่ยนเป็น `@require_owner` (เดิม `@require_auth`)
+- **OAuth2 state** — enforce ทุกครั้ง (เดิม optional)
+- **Session lifetime** — 24 ชั่วโมง explicit
+
+---
 
 ### v2.8.0 — Notion Sync, Railway Volume & Bug Fixes
 > `HEAD` · 2026-05-16

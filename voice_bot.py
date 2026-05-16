@@ -3,18 +3,26 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '3.0.0'
-APP_BUILD_DATE = '2026-05-16'
+APP_VERSION = '3.1.0'
+APP_BUILD_DATE = '2026-05-17'
 import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
 from discord import app_commands
-import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse, re, hmac, tempfile
+import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse, re, hmac, tempfile, time
+import logging
+import logging.handlers
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session, render_template
 from flask_wtf.csrf import CSRFProtect, validate_csrf, ValidationError
 from functools import wraps
+try:
+    from flask_limiter import Limiter
+    from flask_limiter.util import get_remote_address
+    _limiter_available = True
+except ImportError:
+    _limiter_available = False
 
 # ===== Thread-safety Locks =====
 _lock_stats   = threading.Lock()
@@ -693,15 +701,31 @@ def save_channel_activity():
 # =========================================
 
 # ===== Logging =====
-def log(msg):
-    line = f'[{datetime.now(THAI_TZ).strftime("%Y-%m-%d %H:%M:%S")}] {msg}\n'
-    with _lock_log:
-        print(line, end='')   # Railway logs → stdout
-        try:
-            with open(LOG_FILE, 'a', encoding='utf-8') as f:
-                f.write(line)
-        except Exception as e:
-            print(f'[LOG ERROR] {e}', flush=True)
+def _setup_file_logger() -> logging.Logger:
+    """Configure a module-level logger with RotatingFileHandler (10 MB × 5 files)."""
+    logger = logging.getLogger('voicebot')
+    if logger.handlers:
+        return logger  # already configured
+    logger.setLevel(logging.DEBUG)
+    fmt = logging.Formatter('[%(asctime)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
+    # Stdout handler (Railway captures stdout)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
+    # Rotating file handler — safe against large files
+    try:
+        fh = logging.handlers.RotatingFileHandler(
+            LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=5, encoding='utf-8')
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
+    except Exception as e:
+        print(f'[LOG SETUP ERROR] {e}', flush=True)
+    return logger
+
+_logger = _setup_file_logger()
+
+def log(msg: str) -> None:
+    _logger.info(msg)
 # ===================
 
 # ===== Time-range stats helper =====
@@ -1452,6 +1476,53 @@ async def on_raw_reaction_remove(payload):
         return
     save_votes()
 
+async def _handle_voice_join(member, after, channel, gid):
+    """Handle a member joining a voice channel."""
+    record_join(gid, member.id, member.display_name, after.channel.name)
+    record_voice_event(gid, member.id)
+    event_counts['join'] += 1
+    if get_gc(gid, 'announce_join', True):
+        await channel.send(f'{member.display_name} เข้าห้อง {after.channel.name}')
+    fire_outbound_webhook('voice_join', {'user': member.display_name, 'channel': after.channel.name, 'guild': member.guild.name})
+    if check_voice_spam(gid, member.id):
+        spam_max = get_gc(gid, 'spam_max_events', SPAM_MAX_EVENTS)
+        spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
+        await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
+
+
+async def _handle_voice_leave(member, before, channel, gid):
+    """Handle a member leaving a voice channel."""
+    new_milestones = record_leave(gid, member.id)
+    record_voice_event(gid, member.id)
+    event_counts['leave'] += 1
+    if get_gc(gid, 'announce_leave', True):
+        await channel.send(f'{member.display_name} ออกจากห้อง {before.channel.name}')
+    fire_outbound_webhook('voice_leave', {'user': member.display_name, 'channel': before.channel.name, 'guild': member.guild.name})
+    if check_voice_spam(gid, member.id):
+        spam_max = get_gc(gid, 'spam_max_events', SPAM_MAX_EVENTS)
+        spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
+        await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
+    if new_milestones:
+        stats_ch = get_guild_ch(gid, 'stats') or channel
+        for hours in sorted(new_milestones):
+            await stats_ch.send(
+                f'🎉 **{member.display_name}** ใช้เวลา Voice รวมครบ **{hours} ชั่วโมง** แล้ว! ยอดเยี่ยม!')
+
+
+async def _handle_voice_move(member, before, after, channel, gid):
+    """Handle a member moving between voice channels."""
+    new_milestones = record_leave(gid, member.id)
+    record_join(gid, member.id, member.display_name, after.channel.name)
+    if new_milestones:
+        stats_ch = get_guild_ch(gid, 'stats') or channel
+        for hours in sorted(new_milestones):
+            await stats_ch.send(
+                f'🎉 **{member.display_name}** ใช้เวลา Voice รวมครบ **{hours} ชั่วโมง** แล้ว! ยอดเยี่ยม!')
+    if get_gc(gid, 'announce_move', True):
+        await channel.send(f'{member.display_name} ย้ายจาก {before.channel.name} ไป {after.channel.name}')
+    fire_outbound_webhook('voice_move', {'user': member.display_name, 'from': before.channel.name, 'to': after.channel.name, 'guild': member.guild.name})
+
+
 @client.event
 async def on_voice_state_update(member, before, after):
     if member.bot:
@@ -1463,47 +1534,11 @@ async def on_voice_state_update(member, before, after):
     gid = member.guild.id
 
     if before.channel is None and after.channel is not None:
-        record_join(gid, member.id, member.display_name, after.channel.name)
-        record_voice_event(gid, member.id)
-        event_counts['join'] += 1
-        if get_gc(gid, 'announce_join', True):
-            await channel.send(f'{member.display_name} เข้าห้อง {after.channel.name}')
-        fire_outbound_webhook('voice_join', {'user': member.display_name, 'channel': after.channel.name, 'guild': member.guild.name})
-        if check_voice_spam(gid, member.id):
-            spam_max = get_gc(gid, 'spam_max_events', SPAM_MAX_EVENTS)
-            spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
-            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
+        await _handle_voice_join(member, after, channel, gid)
     elif before.channel is not None and after.channel is None:
-        new_milestones = record_leave(gid, member.id)
-        record_voice_event(gid, member.id)
-        event_counts['leave'] += 1
-        if get_gc(gid, 'announce_leave', True):
-            await channel.send(f'{member.display_name} ออกจากห้อง {before.channel.name}')
-        fire_outbound_webhook('voice_leave', {'user': member.display_name, 'channel': before.channel.name, 'guild': member.guild.name})
-        if check_voice_spam(gid, member.id):
-            spam_max = get_gc(gid, 'spam_max_events', SPAM_MAX_EVENTS)
-            spam_win = get_gc(gid, 'spam_window_sec', SPAM_WINDOW_SEC)
-            await channel.send(f'⚠️ {member.display_name} เข้า-ออกห้อง Voice ถี่เกินไป ({spam_max} ครั้งใน {spam_win} วินาที)')
-        # Feature 5: milestone announcements
-        if new_milestones:
-            stats_ch = get_guild_ch(gid, 'stats') or channel
-            for hours in sorted(new_milestones):
-                await stats_ch.send(
-                    f'🎉 **{member.display_name}** ใช้เวลา Voice รวมครบ **{hours} ชั่วโมง** แล้ว! ยอดเยี่ยม!'
-                )
+        await _handle_voice_leave(member, before, channel, gid)
     elif before.channel != after.channel:
-        new_milestones = record_leave(gid, member.id)
-        record_join(gid, member.id, member.display_name, after.channel.name)
-        # Feature 5: milestone announcements on channel switch too
-        if new_milestones:
-            stats_ch = get_guild_ch(gid, 'stats') or channel
-            for hours in sorted(new_milestones):
-                await stats_ch.send(
-                    f'🎉 **{member.display_name}** ใช้เวลา Voice รวมครบ **{hours} ชั่วโมง** แล้ว! ยอดเยี่ยม!'
-                )
-        if get_gc(gid, 'announce_move', True):
-            await channel.send(f'{member.display_name} ย้ายจาก {before.channel.name} ไป {after.channel.name}')
-        fire_outbound_webhook('voice_move', {'user': member.display_name, 'from': before.channel.name, 'to': after.channel.name, 'guild': member.guild.name})
+        await _handle_voice_move(member, before, after, channel, gid)
 
     if before.self_mute != after.self_mute and get_gc(gid, 'announce_mute', True) and check_cooldown(member.id, 'mute', guild_id=gid):
         event_counts['mute'] += 1
@@ -1535,6 +1570,13 @@ flask_app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken']   # accept CSRF token fro
 flask_app.permanent_session_lifetime = timedelta(hours=24)  # sessions expire after 24h
 
 csrf = CSRFProtect(flask_app)  # sets up csrf_token() Jinja2 helper + token infrastructure
+
+# Rate limiter — 5 login attempts per minute per IP to prevent brute-force
+if _limiter_available:
+    _limiter = Limiter(key_func=get_remote_address, app=flask_app,
+                       default_limits=[], storage_uri='memory://')
+else:
+    _limiter = None  # graceful fallback if flask-limiter not installed
 
 @flask_app.after_request
 def _set_security_headers(response):
@@ -1655,7 +1697,15 @@ def api_csrf_token():
     return jsonify({'token': generate_csrf()})
 # ========================
 
+def _login_route(f):
+    """Apply rate-limit decorator when flask-limiter is available."""
+    if _limiter is not None:
+        return _limiter.limit('5 per minute')(f)
+    return f
+
+
 @flask_app.route('/login', methods=['GET', 'POST'])
+@_login_route
 def login():
     # Password login is owner-only emergency access.
     # Hide the form if no password is configured, or if Discord login is available
@@ -1714,6 +1764,7 @@ def oauth_callback():
     if not expected_state or state != expected_state:
         log(f'Discord OAuth state mismatch: got {state}, expected {expected_state}')
         return redirect('/login')
+    flask_session.pop('oauth_state', None)  # consume state — prevent replay
     try:
         # Exchange code for token
         data = urllib.parse.urlencode({
@@ -2112,6 +2163,14 @@ def api_guild_config_post():
         return jsonify({'ok': False, 'error': 'guild_id required'}), 400
     if not require_guild_access(guild_id):
         return jsonify({'error': 'Forbidden'}), 403
+    # Re-verify bot is still in this guild (prevents stale session entitlements)
+    if not session_is_owner():
+        try:
+            _bot_guild = client.get_guild(int(guild_id))
+        except (ValueError, OverflowError):
+            _bot_guild = None
+        if _bot_guild is None:
+            return jsonify({'error': 'Guild not found — bot may have left the server'}), 403
     if guild_id not in guild_configs:
         guild_configs[guild_id] = {}
     channel_keys = {'channel_voice', 'channel_content', 'channel_stats'}
@@ -2412,6 +2471,123 @@ def _format_tab(ss, ws, tab_color_rgb, num_data_rows=0):
         except Exception as e:
             log(f'sheets: format warning: {e}')
 
+def _sheets_sync_sessions(ss, gid: str, sfx: str, session_history) -> int:
+    """Write Sessions tab. Returns row count."""
+    tab = _ensure_tab(ss, f'📋 Sessions{sfx}',
+        ['Guild', 'Member', 'Channel', 'Join', 'Leave', 'Duration (min)', 'Seconds'])
+    rows = [
+        [s.get('guild_id',''), s.get('name',''), s.get('channel',''),
+         s.get('join',''), s.get('leave',''),
+         round(s.get('seconds', 0) / 60, 1), s.get('seconds', 0)]
+        for s in session_history if s.get('guild_id') == gid
+    ]
+    if rows:
+        tab.resize(rows=len(rows) + 1)
+        tab.update('A2', rows)
+    _format_tab(ss, tab, _rgb(66, 133, 244), len(rows))
+    return len(rows)
+
+
+def _sheets_sync_leaderboard(ss, gid: str, sfx: str, ud: dict, ws_: dict) -> tuple[list, int]:
+    """Write Leaderboard tab. Returns (lb_data, row_count)."""
+    tab = _ensure_tab(ss, f'🏆 Leaderboard{sfx}',
+        ['Rank', 'Name', 'Total Hours', 'Total Seconds', 'Sessions',
+         'Streak Max', 'First Seen', 'Last Seen'])
+    all_uids = set(ud.keys()) | set(ws_.keys())
+    lb_data: list = []
+    for uid_str in all_uids:
+        udata = ud.get(uid_str, {})
+        wdata = ws_.get(uid_str, {})
+        alltime_sec = udata.get('alltime_seconds', wdata.get('seconds', 0))
+        lb_data.append({
+            'name':       udata.get('name') or wdata.get('name') or 'Unknown',
+            'hours':      round(alltime_sec / 3600, 2),
+            'seconds':    alltime_sec,
+            'sessions':   udata.get('session_count', 0),
+            'streak':     udata.get('streak_max', 0),
+            'first_seen': udata.get('first_seen', ''),
+            'last_seen':  udata.get('last_seen', ''),
+        })
+    lb_data.sort(key=lambda x: x['seconds'], reverse=True)
+    lb_rows = [[i+1, d['name'], d['hours'], d['seconds'],
+                 d['sessions'], d['streak'], d['first_seen'], d['last_seen']]
+               for i, d in enumerate(lb_data)]
+    if lb_rows:
+        tab.resize(rows=len(lb_rows) + 1)
+        tab.update('A2', lb_rows)
+    _format_tab(ss, tab, _rgb(251, 188, 4), len(lb_rows))
+    return lb_data, len(lb_rows)
+
+
+def _sheets_sync_dau(ss, gid: str, sfx: str, du: dict, da: dict) -> int:
+    """Write DAU tab. Returns row count."""
+    if not du:
+        return 0
+    tab = _ensure_tab(ss, f'📈 DAU{sfx}', ['Date', 'DAU', 'Total Joins'])
+    dates = sorted(du.keys())
+    rows  = [[d, len(du.get(d, [])), da.get(d, 0)] for d in dates]
+    tab.resize(rows=len(rows) + 1)
+    tab.update('A2', rows)
+    _format_tab(ss, tab, _rgb(52, 168, 83), len(rows))
+    return len(rows)
+
+
+def _sheets_sync_members(ss, gid: str, sfx: str, ud: dict) -> int:
+    """Write Members tab. Returns row count."""
+    tab = _ensure_tab(ss, f'👥 Members{sfx}',
+        ['Member ID', 'Name', 'Total Hours', 'Sessions',
+         'Streak Max', 'Active Days', 'First Seen', 'Last Seen', 'Note'])
+    notes_g = _sheets_notes.get(gid, {})
+    rows = []
+    for uid_str, udata in ud.items():
+        alltime_sec = udata.get('alltime_seconds', 0)
+        rows.append([
+            uid_str,
+            udata.get('name', ''),
+            round(alltime_sec / 3600, 2),
+            udata.get('session_count', 0),
+            udata.get('streak_max', 0),
+            len(udata.get('dates', {})),
+            udata.get('first_seen', ''),
+            udata.get('last_seen', ''),
+            notes_g.get(uid_str, ''),
+        ])
+    if rows:
+        tab.resize(rows=len(rows) + 1)
+        tab.update('A2', rows)
+    _format_tab(ss, tab, _rgb(154, 109, 234), len(rows))
+    return len(rows)
+
+
+def _sheets_sync_summary(ss, gid: str, sfx: str, gname: str, ud: dict, lb_data: list,
+                          session_history, du: dict, da: dict) -> None:
+    """Write Summary tab."""
+    tab = _ensure_tab(ss, f'⭐ Summary{sfx}', ['Metric', 'Value'])
+    now_str    = datetime.now(THAI_TZ).strftime('%Y-%m-%d %H:%M')
+    total_hours = round(sum(ud.get(u, {}).get('alltime_seconds', 0) for u in ud) / 3600, 1)
+    guild_sess  = [s for s in session_history if s.get('guild_id') == gid]
+    avg_sess_sec = (sum(s.get('seconds', 0) for s in guild_sess)
+                    // max(len(guild_sess), 1))
+    dau_today   = len(du.get(datetime.now(THAI_TZ).strftime('%Y-%m-%d'), []))
+    rows = [
+        ['Server', gname],
+        ['Last Sync', now_str],
+        [''],
+        ['Total Members', len(set(ud.keys()))],
+        ['Total Sessions', len(guild_sess)],
+        ['Total Voice Hours', total_hours],
+        ['Avg Session (min)', round(avg_sess_sec / 60, 1)],
+        ['DAU Today', dau_today],
+        [''],
+        ['🥇 #1 All-time', lb_data[0]['name'] + f' ({lb_data[0]["hours"]}h)' if lb_data else '-'],
+        ['🥈 #2 All-time', lb_data[1]['name'] + f' ({lb_data[1]["hours"]}h)' if len(lb_data) > 1 else '-'],
+        ['🥉 #3 All-time', lb_data[2]['name'] + f' ({lb_data[2]["hours"]}h)' if len(lb_data) > 2 else '-'],
+    ]
+    tab.resize(rows=len(rows) + 1)
+    tab.update('A2', rows)
+    _format_tab(ss, tab, _rgb(234, 67, 53), len(rows))
+
+
 def sync_to_sheets(target_guild_id=None):
     """Push bot data to Google Sheets (all tabs + formatting). Returns result dict."""
     global _sheets_last_sync, _sheets_last_err
@@ -2461,114 +2637,12 @@ def sync_to_sheets(target_guild_id=None):
                 du  = daily_unique.get(gid, {})
                 da  = daily_activity.get(gid, {})
 
-                # ── Tab 1: 📋 Sessions (Blue) ─────────────────────────────────
-                tab_sess = _ensure_tab(ss, f'📋 Sessions{sfx}',
-                    ['Guild', 'Member', 'Channel', 'Join', 'Leave', 'Duration (min)', 'Seconds'])
-                sess_rows = [
-                    [s.get('guild_id',''), s.get('name',''), s.get('channel',''),
-                     s.get('join',''), s.get('leave',''),
-                     round(s.get('seconds', 0) / 60, 1), s.get('seconds', 0)]
-                    for s in session_history if s.get('guild_id') == gid
-                ]
-                if sess_rows:
-                    tab_sess.resize(rows=len(sess_rows) + 1)
-                    tab_sess.update('A2', sess_rows)
-                    total_rows += len(sess_rows)
-                _format_tab(ss, tab_sess, _rgb(66, 133, 244), len(sess_rows))  # Google Blue
-
-                # ── Tab 2: 🏆 Leaderboard (Gold) ──────────────────────────────
-                tab_lb = _ensure_tab(ss, f'🏆 Leaderboard{sfx}',
-                    ['Rank', 'Name', 'Total Hours', 'Total Seconds', 'Sessions',
-                     'Streak Max', 'First Seen', 'Last Seen'])
-                all_uids = set(ud.keys()) | set(ws_.keys())
-                lb_data  = []
-                for uid_str in all_uids:
-                    udata = ud.get(uid_str, {})
-                    wdata = ws_.get(uid_str, {})
-                    alltime_sec = udata.get('alltime_seconds', wdata.get('seconds', 0))
-                    lb_data.append({
-                        'name':       udata.get('name') or wdata.get('name') or 'Unknown',
-                        'hours':      round(alltime_sec / 3600, 2),
-                        'seconds':    alltime_sec,
-                        'sessions':   udata.get('session_count', 0),
-                        'streak':     udata.get('streak_max', 0),
-                        'first_seen': udata.get('first_seen', ''),
-                        'last_seen':  udata.get('last_seen', ''),
-                    })
-                lb_data.sort(key=lambda x: x['seconds'], reverse=True)
-                lb_rows = [[i+1, d['name'], d['hours'], d['seconds'],
-                             d['sessions'], d['streak'], d['first_seen'], d['last_seen']]
-                           for i, d in enumerate(lb_data)]
-                if lb_rows:
-                    tab_lb.resize(rows=len(lb_rows) + 1)
-                    tab_lb.update('A2', lb_rows)
-                    total_rows += len(lb_rows)
-                _format_tab(ss, tab_lb, _rgb(251, 188, 4), len(lb_rows))  # Google Yellow
-
-                # ── Tab 3: 📈 DAU (Green) ─────────────────────────────────────
-                if du:
-                    tab_dau = _ensure_tab(ss, f'📈 DAU{sfx}', ['Date', 'DAU', 'Total Joins'])
-                    dates    = sorted(du.keys())
-                    dau_rows = [[d, len(du.get(d, [])), da.get(d, 0)] for d in dates]
-                    tab_dau.resize(rows=len(dau_rows) + 1)
-                    tab_dau.update('A2', dau_rows)
-                    total_rows += len(dau_rows)
-                    _format_tab(ss, tab_dau, _rgb(52, 168, 83), len(dau_rows))  # Google Green
-
-                # ── Tab 4: 👥 Members (Purple) ────────────────────────────────
-                tab_mem = _ensure_tab(ss, f'👥 Members{sfx}',
-                    ['Member ID', 'Name', 'Total Hours', 'Sessions',
-                     'Streak Max', 'Active Days', 'First Seen', 'Last Seen', 'Note'])
-                notes_g = _sheets_notes.get(gid, {})
-                mem_rows = []
-                for uid_str, udata in ud.items():
-                    alltime_sec = udata.get('alltime_seconds', 0)
-                    mem_rows.append([
-                        uid_str,
-                        udata.get('name', ''),
-                        round(alltime_sec / 3600, 2),
-                        udata.get('session_count', 0),
-                        udata.get('streak_max', 0),
-                        len(udata.get('dates', {})),
-                        udata.get('first_seen', ''),
-                        udata.get('last_seen', ''),
-                        notes_g.get(uid_str, ''),
-                    ])
-                if mem_rows:
-                    tab_mem.resize(rows=len(mem_rows) + 1)
-                    tab_mem.update('A2', mem_rows)
-                    total_rows += len(mem_rows)
-                _format_tab(ss, tab_mem, _rgb(154, 109, 234), len(mem_rows))  # Purple
-
-                # ── Tab 5: ⭐ Summary (Red) ────────────────────────────────────
-                tab_sum = _ensure_tab(ss, f'⭐ Summary{sfx}', ['Metric', 'Value'])
-                now_str = datetime.now(THAI_TZ).strftime('%Y-%m-%d %H:%M')
-                total_hours = round(sum(ud.get(u, {}).get('alltime_seconds', 0)
-                                        for u in ud) / 3600, 1)
-                top3 = lb_data[:3] if lb_data else []
-                top3_str = ' / '.join(d['name'] for d in top3) if top3 else '-'
-                avg_sess_sec = (
-                    sum(s.get('seconds', 0) for s in session_history if s.get('guild_id') == gid)
-                    // max(len([s for s in session_history if s.get('guild_id') == gid]), 1)
-                )
-                dau_today = len(du.get(datetime.now(THAI_TZ).strftime('%Y-%m-%d'), []))
-                sum_rows = [
-                    ['Server', gname],
-                    ['Last Sync', now_str],
-                    [''],
-                    ['Total Members', len(set(ud.keys()) | set(ws_.keys()))],
-                    ['Total Sessions', len([s for s in session_history if s.get('guild_id') == gid])],
-                    ['Total Voice Hours', total_hours],
-                    ['Avg Session (min)', round(avg_sess_sec / 60, 1)],
-                    ['DAU Today', dau_today],
-                    [''],
-                    ['🥇 #1 All-time', lb_data[0]['name'] + f' ({lb_data[0]["hours"]}h)' if lb_data else '-'],
-                    ['🥈 #2 All-time', lb_data[1]['name'] + f' ({lb_data[1]["hours"]}h)' if len(lb_data) > 1 else '-'],
-                    ['🥉 #3 All-time', lb_data[2]['name'] + f' ({lb_data[2]["hours"]}h)' if len(lb_data) > 2 else '-'],
-                ]
-                tab_sum.resize(rows=len(sum_rows) + 1)
-                tab_sum.update('A2', sum_rows)
-                _format_tab(ss, tab_sum, _rgb(234, 67, 53), len(sum_rows))  # Google Red
+                total_rows += _sheets_sync_sessions(ss, gid, sfx, session_history)
+                lb_data, lb_rows = _sheets_sync_leaderboard(ss, gid, sfx, ud, ws_)
+                total_rows += lb_rows
+                total_rows += _sheets_sync_dau(ss, gid, sfx, du, da)
+                total_rows += _sheets_sync_members(ss, gid, sfx, ud)
+                _sheets_sync_summary(ss, gid, sfx, gname, ud, lb_data, session_history, du, da)
 
             _sheets_last_sync = datetime.now(THAI_TZ).strftime('%Y-%m-%d %H:%M')
             _sheets_last_err  = None
@@ -2736,6 +2810,35 @@ def _notion_ensure_schema() -> tuple[bool, str]:
         return False, err
     return True, 'Schema OK'
 
+def _notion_bulk_find_pages(uids: list[str]) -> dict[str, str]:
+    """
+    Bulk-query Notion database for all given Discord UIDs.
+    Returns {uid: page_id} for existing rows — single HTTP request per 100-item batch.
+    """
+    uid_to_page: dict[str, str] = {}
+    if not uids:
+        return uid_to_page
+    # Batch into chunks of 100 (Notion OR filter limit)
+    for i in range(0, len(uids), 100):
+        chunk = uids[i:i + 100]
+        body = {
+            'filter': {
+                'or': [
+                    {'property': 'Discord ID', 'rich_text': {'equals': uid}}
+                    for uid in chunk
+                ]
+            },
+            'page_size': 100,
+        }
+        result, _ = _notion_req('POST', f'/databases/{NOTION_DATABASE_ID}/query', body)
+        if result and result.get('results'):
+            for page in result['results']:
+                props = page.get('properties', {})
+                did_prop = props.get('Discord ID', {}).get('rich_text', [])
+                if did_prop:
+                    uid_to_page[did_prop[0]['text']['content']] = page['id']
+    return uid_to_page
+
 def _notion_find_page(uid: str) -> str | None:
     """Return page_id of existing row for this Discord uid, or None."""
     result, _ = _notion_req('POST', f'/databases/{NOTION_DATABASE_ID}/query', {
@@ -2798,6 +2901,9 @@ def sync_to_notion(target_guild_id: str | None = None) -> dict:
             guild_d    = daily_snap.get(str(gid), {})
             all_uids   = set(guild_w.keys()) | set(guild_d.keys())
 
+            # Bulk-fetch all existing Notion pages for this guild in one HTTP round-trip
+            uid_to_page = _notion_bulk_find_pages(list(all_uids))
+
             for uid in all_uids:
                 w = guild_w.get(uid, {})
                 d = guild_d.get(uid, {})
@@ -2810,7 +2916,7 @@ def sync_to_notion(target_guild_id: str | None = None) -> dict:
 
                 props    = _notion_props(name, uid, guild_name, weekly_min,
                                          total_hrs, streak, sessions, last_seen)
-                page_id  = _notion_find_page(uid)
+                page_id  = uid_to_page.get(uid)
                 if page_id:
                     _, err = _notion_req('PATCH', f'/pages/{page_id}', {'properties': props})
                 else:
@@ -2968,6 +3074,12 @@ def api_dau():
         result.append({'date': d, 'dau': dau, 'joins': joins})
     return jsonify(result)
 
+# ── Simple TTL cache for expensive endpoints ──────────────────────────────────
+_ldb_cache: dict  = {}   # {(gid, period, sort): (result_list, expires_at)}
+_ret_cache: dict  = {}   # {(gid, num_weeks): (result_list, expires_at)}
+_LDB_TTL = 60            # seconds
+_RET_TTL = 300           # 5 minutes
+
 # ── Leaderboard with period ───────────────────────────────────────────────────
 @flask_app.route('/api/leaderboard')
 @require_auth
@@ -2979,6 +3091,10 @@ def api_leaderboard():
     period = request.args.get('period', '7d')
     sort   = request.args.get('sort', 'time')   # time | sessions | streak | days
     now    = datetime.now(THAI_TZ)
+    _cache_key = (gid, period, sort)
+    _cached = _ldb_cache.get(_cache_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
     if period == '7d':
         # fast path — use weekly_stats in-memory
         combined = {
@@ -3035,12 +3151,14 @@ def api_leaderboard():
         if sort == 'days':     return str(v.get('active_days', 0)) + ' วัน'
         return format_duration(v['seconds'])
 
-    return jsonify([
+    _result = [
         {'uid': uid, 'name': v['name'], 'seconds': v['seconds'], 'duration': _value_label(v),
          'session_count': v.get('session_count', 0), 'streak_max': v.get('streak_max', 0),
          'active_days': v.get('active_days', 0)}
         for uid, v in ranked
-    ])
+    ]
+    _ldb_cache[_cache_key] = (_result, time.monotonic() + _LDB_TTL)
+    return jsonify(_result)
 
 # ── Inactive users ────────────────────────────────────────────────────────────
 @flask_app.route('/api/inactive')
@@ -3090,6 +3208,10 @@ def api_retention():
         num_weeks = max(2, min(int(request.args.get('weeks', 8)), 26))
     except ValueError:
         return jsonify({'error': 'invalid weeks'}), 400
+    _ret_key = (gid, num_weeks)
+    _ret_cached = _ret_cache.get(_ret_key)
+    if _ret_cached and time.monotonic() < _ret_cached[1]:
+        return jsonify(_ret_cached[0])
     now = datetime.now(THAI_TZ)
     # Build weekly uid sets from session_history
     weeks = []
@@ -3118,6 +3240,7 @@ def api_retention():
             'retained_count': retained,
             'retention_pct':  pct,
         })
+    _ret_cache[_ret_key] = (result, time.monotonic() + _RET_TTL)
     return jsonify(result)
 
 # ── WAU (Weekly Active Users) ─────────────────────────────────────────────────
