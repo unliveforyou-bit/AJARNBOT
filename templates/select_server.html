@@ -40,7 +40,13 @@
     <a href="/logout" class="logout">ออกจากระบบ</a>
   </div>
   <div class="user-info">
-    <div class="avatar">{{ avatar_html | safe }}</div>
+    <div class="avatar">
+      {% if avatar_url %}
+        <img src="{{ avatar_url }}" alt="">
+      {% else %}
+        {{ avatar_initial }}
+      {% endif %}
+    </div>
     <div>
       <div style="font-size:14px;font-weight:600">{{ username }}</div>
       <div style="font-size:12px;color:#949ba4">เลือก Server ที่ต้องการจัดการ</div>
@@ -52,8 +58,22 @@
   </div>
   <p class="sub">Server ที่บอทเข้าร่วมแล้วและคุณเป็นแอดมิน:</p>
   <div class="guilds">
-    {% if guild_cards %}
-      {{ guild_cards | safe }}
+    {% if guilds %}
+      {% for g in guilds %}
+      <a href="/set-guild/{{ g.id }}" class="guild-card">
+        <div class="guild-icon">
+          {% if g.icon_url %}
+            <img src="{{ g.icon_url }}" alt="">
+          {% else %}
+            {{ g.initial }}
+          {% endif %}
+        </div>
+        <div>
+          <div class="guild-name">{{ g.name }}</div>
+          {% if g.member_count %}<div class="guild-members">{{ g.member_count }} สมาชิก</div>{% endif %}
+        </div>
+      </a>
+      {% endfor %}
     {% else %}
       <div class="no-guilds">
         <div style="font-size:32px;margin-bottom:12px">🎙️</div>

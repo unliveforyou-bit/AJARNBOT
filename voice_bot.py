@@ -9,10 +9,11 @@ import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
 from discord import app_commands
-import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse, re, hmac
+import random, os, sys, asyncio, threading, json, secrets, urllib.request, urllib.parse, re, hmac, tempfile
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, Response, redirect, session as flask_session, render_template
+from flask_wtf.csrf import CSRFProtect, validate_csrf, ValidationError
 from functools import wraps
 
 # ===== Thread-safety Locks =====
@@ -52,8 +53,11 @@ SHEETS_OWNER_EMAIL        = os.environ.get('SHEETS_OWNER_EMAIL', '')  # Gmail to
 # ===== Startup config validation =====
 _FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
 if not _FLASK_SECRET_RAW:
-    print('⚠️  WARNING: FLASK_SECRET not set — sessions will be invalidated on every restart!')
-    print('⚠️  Set FLASK_SECRET env var in Railway to a fixed hex string (e.g. openssl rand -hex 32)')
+    raise RuntimeError(
+        'FLASK_SECRET env var is not set.\n'
+        'Generate one with:  openssl rand -hex 32\n'
+        'Then add it to Railway Variables.'
+    )
 if OUTBOUND_WEBHOOK_URL and not OUTBOUND_WEBHOOK_URL.startswith('https://'):
     raise ValueError(
         f'OUTBOUND_WEBHOOK_URL must start with https:// to prevent SSRF. Got: {OUTBOUND_WEBHOOK_URL!r}'
@@ -81,6 +85,15 @@ USER_DAILY_FILE      = os.path.join(DATA_DIR, 'user_daily.json')
 MILESTONES_FILE      = os.path.join(DATA_DIR, 'milestones.json')
 CHANNEL_ACTIVITY_FILE = os.path.join(DATA_DIR, 'channel_activity.json')
 os.makedirs(DATA_DIR, exist_ok=True)
+
+def _atomic_json_dump(data: object, filepath: str, **kwargs) -> None:
+    """Write JSON atomically — temp file + os.replace to prevent corrupt files on crash."""
+    dir_ = os.path.dirname(filepath) or '.'
+    with tempfile.NamedTemporaryFile('w', dir=dir_, delete=False, suffix='.tmp',
+                                    encoding='utf-8') as tmp:
+        json.dump(data, tmp, **kwargs)
+        tmp_path = tmp.name
+    os.replace(tmp_path, filepath)
 
 # Warn early if no Railway persistent volume is configured
 if not os.environ.get('RAILWAY_VOLUME_MOUNT_PATH'):
@@ -126,8 +139,7 @@ def load_config():
 
 def save_config():
     with _lock_config:
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(bot_config, f, ensure_ascii=False, indent=2)
+        _atomic_json_dump(bot_config, CONFIG_FILE, ensure_ascii=False, indent=2)
 # ==================
 
 # ===== Per-guild Config =====
@@ -165,8 +177,7 @@ def load_guild_configs():
 
 def save_guild_configs():
     with _lock_guild:
-        with open(GUILD_CONFIGS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(guild_configs, f, ensure_ascii=False, indent=2)
+        _atomic_json_dump(guild_configs, GUILD_CONFIGS_FILE, ensure_ascii=False, indent=2)
 # ============================
 
 # ===== Jokes / Trivia =====
@@ -238,8 +249,7 @@ def load_stats():
 
 def save_stats():
     with _lock_stats:
-        with open(STATS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(weekly_stats, f, ensure_ascii=False, indent=2)
+        _atomic_json_dump(weekly_stats, STATS_FILE, ensure_ascii=False, indent=2)
 
 from bot_utils import format_duration  # pure function — tested in tests/
 # =====================================
@@ -255,8 +265,7 @@ def load_hourly():
 
 def save_hourly():
     with _lock_hourly:
-        with open(HOURLY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(hourly_activity, f)
+        _atomic_json_dump(hourly_activity, HOURLY_FILE)
 # =================================
 
 # ===== Session History =====
@@ -270,8 +279,7 @@ def load_history():
 
 def save_history():
     with _lock_history:
-        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(session_history[-MAX_HISTORY:], f, ensure_ascii=False, indent=2)
+        _atomic_json_dump(session_history[-MAX_HISTORY:], HISTORY_FILE, ensure_ascii=False, indent=2)
 # ===========================
 
 # ===== Joke Votes =====
@@ -287,8 +295,7 @@ def load_votes():
 
 def save_votes():
     with _lock_votes:
-        with open(VOTES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(joke_votes, f, ensure_ascii=False, indent=2)
+        _atomic_json_dump(joke_votes, VOTES_FILE, ensure_ascii=False, indent=2)
 
 def register_joke_msg(msg_id, joke_text):
     active_joke_msgs[msg_id] = joke_text
@@ -310,8 +317,7 @@ def load_trivia_scores():
 
 def save_trivia_scores():
     with _lock_trivia:
-        with open(TRIVIA_SCORES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(trivia_scores, f, ensure_ascii=False, indent=2)
+        _atomic_json_dump(trivia_scores, TRIVIA_SCORES_FILE, ensure_ascii=False, indent=2)
 # =========================
 
 # ===== Anti-spam =====
@@ -536,8 +542,7 @@ def save_event_counts():
     """Persist current event_counts to disk."""
     with _lock_event_counts:
         try:
-            with open(EVENT_COUNTS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(event_counts, f, ensure_ascii=False)
+            _atomic_json_dump(event_counts, EVENT_COUNTS_FILE, ensure_ascii=False)
         except Exception as e:
             print(f'[WARN] save_event_counts failed: {e}')
 
@@ -557,8 +562,7 @@ def save_active_sessions():
                     'join':    join_time.isoformat(),
                     'channel': channel,
                 }
-            with open(ACTIVE_SESSIONS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False)
+            _atomic_json_dump(data, ACTIVE_SESSIONS_FILE, ensure_ascii=False)
         except Exception as e:
             print(f'[WARN] save_active_sessions failed: {e}')
 
@@ -596,8 +600,7 @@ def load_daily():
 
 def save_daily():
     with _lock_daily:
-        with open(DAILY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(daily_activity, f, ensure_ascii=False)
+        _atomic_json_dump(daily_activity, DAILY_FILE, ensure_ascii=False)
 
 # ===== User Daily Attendance =====
 user_daily = {}   # {guild_id: {uid: {"name": str, "dates": {"YYYY-MM-DD": int}}}}
@@ -613,8 +616,7 @@ def load_user_daily():
 
 def save_user_daily():
     with _lock_user_daily:
-        with open(USER_DAILY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(user_daily, f, ensure_ascii=False)
+        _atomic_json_dump(user_daily, USER_DAILY_FILE, ensure_ascii=False)
 
 # ===== Daily Unique Users (DAU) =====
 daily_unique = {}   # {guild_id: {date_str: [uid, ...]}}
@@ -632,8 +634,7 @@ def load_daily_unique():
 
 def save_daily_unique():
     with _lock_daily_unique:
-        with open(DAILY_UNIQUE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(daily_unique, f, ensure_ascii=False)
+        _atomic_json_dump(daily_unique, DAILY_UNIQUE_FILE, ensure_ascii=False)
 
 # ===== Milestones (Feature 5) =====
 # milestones_awarded[guild_id][uid] = [hours_int, ...]  — milestones already announced
@@ -652,8 +653,7 @@ def load_milestones():
 
 def save_milestones():
     with _lock_milestones:
-        with open(MILESTONES_FILE, 'w', encoding='utf-8') as f:
-            json.dump(milestones_awarded, f, ensure_ascii=False)
+        _atomic_json_dump(milestones_awarded, MILESTONES_FILE, ensure_ascii=False)
 
 # ===== Channel Activity (Feature 6) =====
 # channel_activity[guild_id][channel_name] = total_seconds
@@ -671,8 +671,7 @@ def load_channel_activity():
 
 def save_channel_activity():
     with _lock_channel_activity:
-        with open(CHANNEL_ACTIVITY_FILE, 'w', encoding='utf-8') as f:
-            json.dump(channel_activity, f, ensure_ascii=False)
+        _atomic_json_dump(channel_activity, CHANNEL_ACTIVITY_FILE, ensure_ascii=False)
 # =========================================
 
 # ===== Logging =====
@@ -1508,10 +1507,14 @@ async def on_voice_state_update(member, before, after):
 
 # ===== Flask Dashboard =====
 flask_app = Flask(__name__)
-flask_app.secret_key = _FLASK_SECRET_RAW or secrets.token_hex(32)
+flask_app.secret_key = _FLASK_SECRET_RAW
 flask_app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 flask_app.config['SESSION_COOKIE_SECURE'] = True
 flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
+flask_app.config['WTF_CSRF_TIME_LIMIT'] = None   # no expiry on CSRF token (session-tied)
+flask_app.config['WTF_CSRF_CHECK_DEFAULT'] = False  # validate manually per route
+
+csrf = CSRFProtect(flask_app)  # sets up csrf_token() Jinja2 helper + token infrastructure
 
 # ===== Auth helpers =====
 def session_is_owner() -> bool:
@@ -1577,13 +1580,18 @@ def _guild_id_or_error():
 
 @flask_app.route('/login', methods=['GET', 'POST'])
 def login():
-    discord_btn = '<a href="/login/discord" class="btn-discord"><svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>เข้าสู่ระบบด้วย Discord</a><div class="divider">หรือ</div>' if DISCORD_CLIENT_ID else ''
     # Password login is owner-only emergency access.
     # Hide the form if no password is configured, or if Discord login is available
     # (Discord login is the preferred method for all users including the owner).
-    show_pw   = bool(DASHBOARD_PASSWORD)
-    has_invite = bool(DISCORD_CLIENT_ID)   # show invite button only if bot OAuth is configured
+    show_pw    = bool(DASHBOARD_PASSWORD)
+    has_invite = bool(DISCORD_CLIENT_ID)
     if request.method == 'POST':
+        try:
+            validate_csrf(request.form.get('csrf_token'))
+        except ValidationError:
+            return render_template('login.html', discord_client_id=DISCORD_CLIENT_ID,
+                                   show_pw=show_pw, has_invite=has_invite,
+                                   error_msg='Session หมดอายุ กรุณาลองใหม่')
         pw = request.form.get('password', '')
         if DASHBOARD_PASSWORD and hmac.compare_digest(pw, DASHBOARD_PASSWORD):
             flask_session['logged_in'] = True
@@ -1592,11 +1600,11 @@ def login():
             flask_session.permanent = True
             return redirect('/')
         log(f'Failed password login attempt from {request.remote_addr}')
-        return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw,
-                               has_invite=has_invite,
-                               error_msg='<div class="err">รหัสผ่านไม่ถูกต้อง</div>')
-    return render_template('login.html', discord_btn=discord_btn, show_pw=show_pw,
-                           has_invite=has_invite, error_msg='')
+        return render_template('login.html', discord_client_id=DISCORD_CLIENT_ID,
+                               show_pw=show_pw, has_invite=has_invite,
+                               error_msg='รหัสผ่านไม่ถูกต้อง')
+    return render_template('login.html', discord_client_id=DISCORD_CLIENT_ID,
+                           show_pw=show_pw, has_invite=has_invite, error_msg='')
 
 @flask_app.route('/login/discord')
 def login_discord():
@@ -1680,29 +1688,30 @@ def select_server():
     if not flask_session.get('logged_in'):
         return redirect('/login')
     user = flask_session.get('discord_user', {})
-    guilds = flask_session.get('discord_guilds', [])
+    raw_guilds = flask_session.get('discord_guilds', [])
     username = user.get('global_name') or user.get('username', 'User')
     uid = user.get('id', '')
     avatar = user.get('avatar', '')
-    if avatar:
-        avatar_html = f'<img src="https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" alt="">'
-    else:
-        avatar_html = username[0].upper() if username else '?'
-    cards = []
-    for g in guilds:
+    avatar_url = f'https://cdn.discordapp.com/avatars/{uid}/{avatar}.png' if avatar else None
+    avatar_initial = (username[0].upper() if username else '?')
+    guilds_data = []
+    for g in raw_guilds:
         gid = g['id']
         name = g.get('name', gid)
         icon = g.get('icon', '')
-        if icon:
-            icon_html = f'<img src="https://cdn.discordapp.com/icons/{gid}/{icon}.png" alt="">'
-        else:
-            icon_html = name[0].upper() if name else '?'
         bot_g = client.get_guild(int(gid))
-        member_count = bot_g.member_count if bot_g else ''
-        members_txt = f'{member_count} สมาชิก' if member_count else ''
-        cards.append(f'<a href="/set-guild/{gid}" class="guild-card"><div class="guild-icon">{icon_html}</div><div><div class="guild-name">{name}</div><div class="guild-members">{members_txt}</div></div></a>')
-    guild_cards = '\n'.join(cards)   # empty string → Jinja2 `if guild_cards` = False → show empty state
-    return render_template('select_server.html', username=username, avatar_html=avatar_html, guild_cards=guild_cards)
+        guilds_data.append({
+            'id':           gid,
+            'name':         name,
+            'icon_url':     f'https://cdn.discordapp.com/icons/{gid}/{icon}.png' if icon else None,
+            'initial':      name[0].upper() if name else '?',
+            'member_count': bot_g.member_count if bot_g else None,
+        })
+    return render_template('select_server.html',
+                           username=username,
+                           avatar_url=avatar_url,
+                           avatar_initial=avatar_initial,
+                           guilds=guilds_data)
 
 @flask_app.route('/set-guild/<guild_id>')
 def set_guild(guild_id):
@@ -1801,11 +1810,11 @@ def no_bot():
     username = user.get('global_name') or user.get('username', 'User')
     uid = user.get('id', '')
     avatar = user.get('avatar', '')
-    avatar_html = (f'<img src="https://cdn.discordapp.com/avatars/{uid}/{avatar}.png" alt="">'
-                   if avatar else (username[0].upper() if username else '?'))
-    invite_url = '/invite'
-    return render_template('no_bot.html', username=username, avatar_html=avatar_html,
-                           invite_url=invite_url)
+    avatar_url = f'https://cdn.discordapp.com/avatars/{uid}/{avatar}.png' if avatar else None
+    avatar_initial = username[0].upper() if username else '?'
+    return render_template('no_bot.html', username=username,
+                           avatar_url=avatar_url, avatar_initial=avatar_initial,
+                           invite_url='/invite')
 
 @flask_app.route('/profile/<uid>')
 @require_auth

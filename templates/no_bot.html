@@ -36,7 +36,9 @@
   <p class="sub">เพื่อใช้งาน AjarnBot Dashboard คุณต้องเพิ่มบอทเข้า Server ที่คุณเป็นแอดมินก่อน</p>
 
   <div class="user-row">
-    <div class="avatar">{{ avatar_html | safe }}</div>
+    <div class="avatar">
+      {% if avatar_url %}<img src="{{ avatar_url }}" alt="">{% else %}{{ avatar_initial }}{% endif %}
+    </div>
     <span class="uname">{{ username }}</span>
     <a href="/logout" class="btn-logout">ออกจากระบบ</a>
   </div>
