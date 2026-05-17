@@ -9,7 +9,7 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 ![Flask](https://img.shields.io/badge/Flask-3.0+-000000?style=flat&logo=flask&logoColor=white)
 ![Railway](https://img.shields.io/badge/Deploy-Railway-0B0D0E?style=flat&logo=railway&logoColor=white)
 ![Version](https://img.shields.io/badge/Version-3.2.0-58a6ff?style=flat)
-![Tests](https://img.shields.io/badge/Tests-98%20passed-3fb950?style=flat)
+![Tests](https://img.shields.io/badge/Tests-279%20passed-3fb950?style=flat)
 
 ---
 
