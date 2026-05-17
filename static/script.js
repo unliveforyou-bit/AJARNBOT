@@ -185,6 +185,7 @@ async function switchGuild(guildId){
     refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
     loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();
+    loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -861,6 +862,117 @@ async function loadLogs(){
     document.getElementById('logBox').textContent='⚠ โหลด log ไม่ได้';
   }
 }
+// ── User Growth: new vs returning users per week ──────────────────────────────
+async function loadUserGrowth(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('userGrowthWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/user-growth?guild_id='+currentGuildId+'&weeks=12');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length||d.every(w=>w.total===0)){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  const maxTotal=Math.max(...d.map(w=>w.total),1);
+  const W=wrap.clientWidth||360,H=110,PAD=36,BAR_W=Math.max(6,Math.floor((W-PAD*2)/d.length)-2);
+  const scaleY=v=>H-8-Math.round(v/maxTotal*(H-16));
+  let bars='';
+  d.forEach((w,i)=>{
+    const x=PAD+i*((W-PAD*2)/d.length);
+    const hN=Math.round(w.new_users/maxTotal*(H-16));
+    const hR=Math.round(w.returning_users/maxTotal*(H-16));
+    const hT=hN+hR;
+    const label=w.week_start.slice(5);// MM-DD
+    if(hT>0){
+      bars+=`<rect x="${x.toFixed(1)}" y="${(H-8-hT).toFixed(1)}" width="${BAR_W}" height="${hR.toFixed(1)}" fill="var(--accent)" opacity="0.85" rx="2">
+        <title>${label}: ${w.returning_users} returning</title></rect>`;
+      if(hN>0)bars+=`<rect x="${x.toFixed(1)}" y="${(H-8-hT).toFixed(1)}" width="${BAR_W}" height="${hN.toFixed(1)}" fill="var(--green)" opacity="0.9" rx="2">
+        <title>${label}: ${w.new_users} new</title></rect>`;
+    }
+    if(i===0||i===d.length-1||i===Math.floor(d.length/2))
+      bars+=`<text x="${(x+BAR_W/2).toFixed(1)}" y="${H}" text-anchor="middle" font-size="9" fill="var(--muted)">${label}</text>`;
+  });
+  const totalNew=d.reduce((a,w)=>a+w.new_users,0);
+  const totalRet=d.reduce((a,w)=>a+w.returning_users,0);
+  wrap.innerHTML=`<svg width="100%" height="${H}" viewBox="0 0 ${W} ${H}" style="overflow:visible">${bars}</svg>`
+    +`<div style="display:flex;gap:12px;font-size:11px;margin-top:6px;color:var(--muted)">`
+    +`<span style="color:var(--green)">■</span><span>ใหม่ ${totalNew} คน</span>`
+    +`<span style="color:var(--accent)">■</span><span>กลับมา ${totalRet} คน</span></div>`;
+}
+
+// ── Channel Details: extended channel table ───────────────────────────────────
+async function loadChannelDetails(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('channelDetailsWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/channel-details?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  wrap.innerHTML='<table class="chdet-table"><thead><tr>'
+    +'<th>ช่อง</th><th>เวลารวม</th><th>Sessions</th><th>Users</th><th>เฉลี่ย</th><th>Peak</th><th>Top User</th>'
+    +'</tr></thead><tbody>'
+    +d.map(r=>'<tr>'
+      +`<td class="chdet-name">${escHTML(r.channel)}</td>`
+      +`<td>${escHTML(r.duration)}</td>`
+      +`<td>${r.sessions}</td>`
+      +`<td>${r.unique_users}</td>`
+      +`<td>${r.avg_min}m</td>`
+      +`<td>${String(r.peak_hour).padStart(2,'0')}:00</td>`
+      +`<td style="color:var(--muted)">${escHTML(r.top_user)}</td>`
+      +'</tr>').join('')
+    +'</tbody></table>';
+}
+
+// ── Co-presence: user pairs heatmap ──────────────────────────────────────────
+async function loadCoPresence(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('copresenceWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/copresence?guild_id='+currentGuildId+'&top=10');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล — ต้องมี session ที่ overlap กัน</span>';return;}
+  const maxC=Math.max(...d.map(p=>p.overlap_count),1);
+  wrap.innerHTML='<div class="cop-list">'
+    +d.map((p,i)=>{
+      const pct=Math.round(p.overlap_count/maxC*100);
+      const rank=i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+      return'<div class="cop-row">'
+        +`<span class="cop-rank">${rank||'#'+(i+1)}</span>`
+        +`<span class="cop-names">${escHTML(p.name_a)} <span style="color:var(--muted)">+</span> ${escHTML(p.name_b)}</span>`
+        +'<div class="cop-bar-bg"><div class="cop-bar-fill" style="width:'+pct+'%"></div></div>'
+        +`<span class="cop-count">${p.overlap_count}×</span>`
+        +'</div>';
+    }).join('')+'</div>';
+}
+
+// ── Milestone log ─────────────────────────────────────────────────────────────
+async function loadMilestoneLog(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('milestoneLogWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/milestone-log?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มี milestone — เล่น voice ให้ครบ 1 ชั่วโมงแรก</span>';return;}
+  const ICONS={1:'🌱',5:'⭐',10:'🔥',25:'💎',50:'👑',100:'🏆',250:'🌟',500:'⚡'};
+  wrap.innerHTML=d.map(m=>'<div class="ms-row">'
+    +`<span class="ms-icon">${ICONS[m.hours]||'🏅'}</span>`
+    +`<span class="ms-name">${escHTML(m.name)}</span>`
+    +`<span class="ms-badge">${m.hours}h</span>`
+    +'</div>').join('');
+}
+
+// ── Live Voice: who's in voice right now ──────────────────────────────────────
+async function loadLiveVoice(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('liveVoiceWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/voice-now?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  const count=document.getElementById('liveVoiceCount');
+  if(count)count.textContent=d.length?d.length+' คน':'ว่าง';
+  if(!d||!d.length){wrap.innerHTML='<span class="empty-msg">ไม่มีใครอยู่ใน voice ตอนนี้</span>';return;}
+  // Group by channel
+  const byChannel={};
+  d.forEach(u=>{(byChannel[u.channel]=byChannel[u.channel]||[]).push(u);});
+  wrap.innerHTML=Object.entries(byChannel).map(([ch,users])=>{
+    const usersHtml=users.map(u=>{
+      const av=u.avatar?`<img src="${escHTML(u.avatar)}?size=32" alt="" class="lv-avatar" loading="lazy">`
+        :`<div class="lv-avatar lv-avatar-init">${escHTML((u.name||'?')[0].toUpperCase())}</div>`;
+      return`<div class="lv-user">${av}<div class="lv-info"><div class="lv-name">${escHTML(u.name)}</div>`
+        +`<div class="lv-dur">${escHTML(u.duration)}</div></div></div>`;
+    }).join('');
+    return`<div class="lv-channel"><div class="lv-ch-name"><i class="ph-bold ph-speaker-high" aria-hidden="true"></i> ${escHTML(ch)}</div>`
+      +`<div class="lv-users">${usersHtml}</div></div>`;
+  }).join('');
+}
+
 if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');const btn=document.getElementById('themeBtn');btn.innerHTML='<i class="ph-bold ph-sun" aria-hidden="true"></i>';btn.setAttribute('aria-label','สลับเป็นธีมมืด');}
 
 // ── Sidebar navigation ──
@@ -896,6 +1008,7 @@ buildUI();loadConfig();
 refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
 loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();
 loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();loadLogs();
+loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
 // Pause polling when tab is hidden to save resources
@@ -906,7 +1019,9 @@ _poll(loadVotes,20000);_poll(loadContribGraph,120000);_poll(loadChannelActivity,
 _poll(loadDAU,120000);_poll(()=>loadLeaderboard(_lbPeriod),30000);
 _poll(loadInactive,300000);_poll(loadRetention,300000);
 _poll(loadDowHeatmap,300000);_poll(loadHistogram,120000);
+_poll(loadUserGrowth,300000);_poll(loadChannelDetails,120000);
+_poll(loadCoPresence,600000);_poll(loadMilestoneLog,300000);_poll(loadLiveVoice,10000);
 // Resume immediately when tab becomes visible again
 document.addEventListener('visibilitychange',()=>{
-  if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();loadDAU();}
+  if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();loadDAU();loadLiveVoice();}
 });

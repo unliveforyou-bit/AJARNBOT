@@ -49,6 +49,11 @@
       <li><a href="#ct-dau-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Trend</a></li>
       <li><a href="#ct-inactive-section"><i class="ph-bold ph-user-minus" aria-hidden="true"></i> Inactive Users</a></li>
       <li><a href="#ct-histogram-section"><i class="ph-bold ph-chart-bar-horizontal" aria-hidden="true"></i> Session Length</a></li>
+      <li><a href="#ct-live-voice-section"><i class="ph-bold ph-waveform" aria-hidden="true"></i> Live Voice</a></li>
+      <li><a href="#ct-growth-section"><i class="ph-bold ph-user-plus" aria-hidden="true"></i> User Growth</a></li>
+      <li><a href="#ct-channel-details-section"><i class="ph-bold ph-chart-bar" aria-hidden="true"></i> Channel Analytics</a></li>
+      <li><a href="#ct-copresence-section"><i class="ph-bold ph-users-three" aria-hidden="true"></i> Voice Buddies</a></li>
+      <li><a href="#ct-milestone-section"><i class="ph-bold ph-medal" aria-hidden="true"></i> Hall of Fame</a></li>
       <li><a href="#ct-notion-section"><i class="ph-bold ph-notion-logo" aria-hidden="true"></i> Notion Sync</a></li>
       <li><a href="#ct-members-section"><i class="ph-bold ph-users" aria-hidden="true"></i> สมาชิกทั้งหมด</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
@@ -460,6 +465,61 @@
             <tbody id="historyBody"><tr><td colspan="5" style="color:var(--muted);padding:16px">ยังไม่มีข้อมูล</td></tr></tbody>
           </table>
         </div>
+      </div>
+    </section>
+
+    <!-- 11b. Channel Details (extended) -->
+    <section class="card" id="ct-channel-details-section" aria-labelledby="ct-chdet">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-chart-bar"></i></div>
+        <h2 class="card-title" id="ct-chdet">Channel Analytics</h2>
+      </div>
+      <div class="card-body" style="padding:0;overflow-x:auto">
+        <div id="channelDetailsWrap"><span class="empty-msg" style="padding:16px;display:block">ยังไม่มีข้อมูล</span></div>
+      </div>
+    </section>
+
+    <!-- 11c. Live Voice Now -->
+    <section class="card" id="ct-live-voice-section" aria-labelledby="ct-live">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-waveform"></i></div>
+        <h2 class="card-title" id="ct-live">Live Voice <span id="liveVoiceCount" class="badge-pill" style="font-size:11px;margin-left:6px;background:var(--green);color:#fff;border-radius:999px;padding:1px 8px"></span></h2>
+      </div>
+      <div class="card-body">
+        <div id="liveVoiceWrap"><span class="empty-msg">ไม่มีใครอยู่ใน voice ตอนนี้</span></div>
+      </div>
+    </section>
+
+    <!-- 11d. User Growth -->
+    <section class="card" id="ct-growth-section" aria-labelledby="ct-growth">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-user-plus"></i></div>
+        <h2 class="card-title" id="ct-growth">User Growth (12 สัปดาห์)</h2>
+      </div>
+      <div class="card-body">
+        <div id="userGrowthWrap"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
+      </div>
+    </section>
+
+    <!-- 11e. Co-presence -->
+    <section class="card" id="ct-copresence-section" aria-labelledby="ct-cop">
+      <div class="card-header">
+        <div class="card-icon" style="background:var(--purple,#7c3aed)" aria-hidden="true"><i class="ph-bold ph-users-three"></i></div>
+        <h2 class="card-title" id="ct-cop">Voice Buddies</h2>
+      </div>
+      <div class="card-body">
+        <div id="copresenceWrap"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
+      </div>
+    </section>
+
+    <!-- 11f. Milestone Log -->
+    <section class="card" id="ct-milestone-section" aria-labelledby="ct-milestone">
+      <div class="card-header">
+        <div class="card-icon" style="background:var(--yellow,#f59e0b)" aria-hidden="true"><i class="ph-bold ph-medal"></i></div>
+        <h2 class="card-title" id="ct-milestone">Hall of Fame — Milestones</h2>
+      </div>
+      <div class="card-body">
+        <div id="milestoneLogWrap"><span class="empty-msg">ยังไม่มี milestone</span></div>
       </div>
     </section>
 

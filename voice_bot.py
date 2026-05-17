@@ -3671,6 +3671,266 @@ def api_histogram():
     return jsonify([{'range': k, 'count': cnts[k]} for k in keys])
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ── User Growth: new vs returning users per week ──────────────────────────────
+_growth_cache: dict = {}   # {(gid, weeks): (result, expires_at)}
+_GROWTH_TTL = 300
+
+@flask_app.route('/api/user-growth')
+@require_auth
+def api_user_growth():
+    """
+    New vs returning users per calendar week.
+    ?guild_id=X&weeks=12  (default 12, max 52)
+    Response: [{week_start, new_users, returning_users, total}]
+    new = first_seen falls in that week; returning = seen before but active this week.
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        num_weeks = max(2, min(int(request.args.get('weeks', 12)), 52))
+    except ValueError:
+        return jsonify({'error': 'invalid weeks'}), 400
+    _key = (gid, num_weeks)
+    _cached = _growth_cache.get(_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    now   = datetime.now(THAI_TZ)
+    today = now.date()
+    monday = today - timedelta(days=today.weekday())
+    gdata  = user_daily.get(gid, {})
+    result = []
+    for w in range(num_weeks - 1, -1, -1):
+        wk_start = monday - timedelta(weeks=w)
+        wk_end   = wk_start + timedelta(days=7)
+        wk_start_s = wk_start.strftime('%Y-%m-%d')
+        wk_end_s   = wk_end.strftime('%Y-%m-%d')
+        new_users       = 0
+        returning_users = 0
+        for uid, udata in gdata.items():
+            dates = udata.get('dates', {})
+            # active this week?
+            active_this_week = any(wk_start_s <= d < wk_end_s for d in dates)
+            if not active_this_week:
+                continue
+            fs = udata.get('first_seen', '')
+            if fs:
+                try:
+                    fs_date = datetime.fromisoformat(fs).date()
+                    if wk_start <= fs_date < wk_end:
+                        new_users += 1
+                    else:
+                        returning_users += 1
+                except Exception:
+                    returning_users += 1
+            else:
+                returning_users += 1
+        result.append({
+            'week_start':      wk_start_s,
+            'new_users':       new_users,
+            'returning_users': returning_users,
+            'total':           new_users + returning_users,
+        })
+    _growth_cache[_key] = (result, time.monotonic() + _GROWTH_TTL)
+    return jsonify(result)
+
+# ── Channel Details: extended per-channel analytics ───────────────────────────
+_chdet_cache: dict = {}   # {gid: (result, expires_at)}
+_CHDET_TTL = 120
+
+@flask_app.route('/api/channel-details')
+@require_auth
+def api_channel_details():
+    """
+    Extended per-channel stats: unique_users, sessions, avg_session_min,
+    peak_hour (0-23), top_user name, total_seconds.
+    ?guild_id=X
+    Response: [{channel, seconds, duration, sessions, unique_users, avg_min,
+                peak_hour, top_user}]  sorted by seconds desc, top 15.
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    _cached = _chdet_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    # aggregate from session_history
+    ch_data: dict = {}   # {channel: {seconds, sessions, users, hours}}
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    for s in hist:
+        ch = s.get('channel') or 'Unknown'
+        if ch not in ch_data:
+            ch_data[ch] = {'seconds': 0, 'sessions': 0, 'users': {}, 'hours': [0]*24}
+        secs = s.get('seconds', 0) or 0
+        ch_data[ch]['seconds']   += secs
+        ch_data[ch]['sessions']  += 1
+        uid  = s.get('uid', '')
+        name = s.get('name', 'Unknown')
+        ch_data[ch]['users'][uid] = ch_data[ch]['users'].get(uid, {'name': name, 'seconds': 0})
+        ch_data[ch]['users'][uid]['seconds'] += secs
+        ch_data[ch]['users'][uid]['name']     = name
+        try:
+            jt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M')
+            ch_data[ch]['hours'][jt.hour] += 1
+        except Exception:
+            pass
+    # Merge live channel_activity for channels not in history
+    for ch, secs in channel_activity.get(gid, {}).items():
+        if ch not in ch_data:
+            ch_data[ch] = {'seconds': secs, 'sessions': 0, 'users': {}, 'hours': [0]*24}
+        else:
+            ch_data[ch]['seconds'] = max(ch_data[ch]['seconds'], secs)
+    result = []
+    for ch, v in sorted(ch_data.items(), key=lambda x: x[1]['seconds'], reverse=True)[:15]:
+        sessions  = max(v['sessions'], 1)
+        avg_min   = round(v['seconds'] / 60 / sessions, 1)
+        peak_hour = v['hours'].index(max(v['hours'])) if any(v['hours']) else 0
+        top_uid   = max(v['users'], key=lambda u: v['users'][u]['seconds'], default=None)
+        top_name  = v['users'][top_uid]['name'] if top_uid else '-'
+        result.append({
+            'channel':      ch,
+            'seconds':      v['seconds'],
+            'duration':     format_duration(v['seconds']),
+            'sessions':     v['sessions'],
+            'unique_users': len(v['users']),
+            'avg_min':      avg_min,
+            'peak_hour':    peak_hour,
+            'top_user':     top_name,
+        })
+    _chdet_cache[gid] = (result, time.monotonic() + _CHDET_TTL)
+    return jsonify(result)
+
+# ── Co-presence: top user pairs who were online together ─────────────────────
+_cop_cache: dict = {}   # {gid: (result, expires_at)}
+_COP_TTL = 600   # 10 min (expensive)
+
+@flask_app.route('/api/copresence')
+@require_auth
+def api_copresence():
+    """
+    Find top user pairs who overlapped in voice (same guild, overlapping time windows).
+    ?guild_id=X&top=10  (default top 10 pairs, max 30)
+    Response: [{uid_a, name_a, uid_b, name_b, overlap_count}]
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        top_n = max(5, min(int(request.args.get('top', 10)), 30))
+    except ValueError:
+        return jsonify({'error': 'invalid top'}), 400
+    _cached = _cop_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0][:top_n])
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    # Parse times once
+    parsed = []
+    for s in hist:
+        try:
+            jt = datetime.strptime(s['join'],  '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            lt = datetime.strptime(s['leave'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            if lt <= jt:
+                continue
+            parsed.append({'uid': s.get('uid', ''), 'name': s.get('name', 'Unknown'),
+                           'jt': jt, 'lt': lt})
+        except Exception:
+            continue
+    # Count pairwise overlaps — O(n²) but capped at 5000 sessions
+    parsed = parsed[-5000:]
+    pair_counts: dict = {}
+    names: dict = {}
+    for i in range(len(parsed)):
+        a = parsed[i]
+        names[a['uid']] = a['name']
+        for j in range(i + 1, len(parsed)):
+            b = parsed[j]
+            if a['uid'] == b['uid']:
+                continue
+            # overlap check
+            if a['jt'] < b['lt'] and b['jt'] < a['lt']:
+                key = tuple(sorted([a['uid'], b['uid']]))
+                pair_counts[key] = pair_counts.get(key, 0) + 1
+    ranked = sorted(pair_counts.items(), key=lambda x: x[1], reverse=True)[:30]
+    result = [
+        {
+            'uid_a': k[0], 'name_a': names.get(k[0], 'Unknown'),
+            'uid_b': k[1], 'name_b': names.get(k[1], 'Unknown'),
+            'overlap_count': v,
+        }
+        for k, v in ranked
+    ]
+    _cop_cache[gid] = (result, time.monotonic() + _COP_TTL)
+    return jsonify(result[:top_n])
+
+# ── Milestone log: all awarded milestones sorted by recency ───────────────────
+@flask_app.route('/api/milestone-log')
+@require_auth
+def api_milestone_log():
+    """
+    List all milestone awards for a guild.
+    ?guild_id=X
+    Response: [{uid, name, hours, awarded_at?}]
+    sorted by hours desc then name.
+    Note: milestones_awarded doesn't store timestamps; we return synthetic entries.
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid   = str(guild_id)
+    gdata = user_daily.get(gid, {})
+    awarded = milestones_awarded.get(gid, {})
+    result  = []
+    for uid, hours_list in awarded.items():
+        name = gdata.get(uid, {}).get('name', 'Unknown')
+        for h in sorted(hours_list):
+            result.append({'uid': uid, 'name': name, 'hours': h})
+    result.sort(key=lambda x: (-x['hours'], x['name']))
+    return jsonify(result[:100])
+
+# ── Live voice: who's in voice right now with elapsed time ───────────────────
+@flask_app.route('/api/voice-now')
+@require_auth
+def api_voice_now():
+    """
+    Live snapshot of voice channel occupancy for a guild.
+    ?guild_id=X
+    Response: [{uid, name, channel, elapsed_sec, duration, avatar}]
+              grouped by channel.
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    now = datetime.now(THAI_TZ)
+    result = []
+    for (gid2, mid), (name, join_time, ch) in list(voice_join_times.items()):
+        if str(gid2) != gid:
+            continue
+        elapsed = int((now - join_time).total_seconds())
+        guild_obj  = client.get_guild(gid2)
+        member_obj = guild_obj.get_member(mid) if guild_obj else None
+        avatar_url = str(member_obj.display_avatar.url) if member_obj and member_obj.display_avatar else None
+        ud = user_daily.get(gid, {}).get(str(mid), {})
+        result.append({
+            'uid':         str(mid),
+            'name':        name,
+            'channel':     ch,
+            'elapsed_sec': elapsed,
+            'duration':    format_duration(elapsed),
+            'avatar':      avatar_url,
+            'alltime_fmt': format_duration(ud.get('alltime_seconds', 0)),
+            'streak':      ud.get('streak_max', 0),
+        })
+    result.sort(key=lambda x: (x['channel'], -x['elapsed_sec']))
+    return jsonify(result)
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 @flask_app.route('/api/trivia-scores')
 @require_auth
 def api_trivia_scores():
