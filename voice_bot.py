@@ -3,8 +3,8 @@ VoiceLog Bot — Cloud version (Railway)
 ไม่มี pystray / plyer / Windows-specific code
 ใช้ environment variables สำหรับ token และ channel ID
 """
-APP_VERSION = '3.1.0'
-APP_BUILD_DATE = '2026-05-17'
+APP_VERSION = '3.2.0'
+APP_BUILD_DATE = '2026-05-18'
 import discord
 from discord.ext import tasks
 from discord.ext import commands as _commands
@@ -3927,6 +3927,340 @@ def api_voice_now():
             'streak':      ud.get('streak_max', 0),
         })
     result.sort(key=lambda x: (x['channel'], -x['elapsed_sec']))
+    return jsonify(result)
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── DAU Forecast: 7-day ahead using exponential moving average ────────────────
+_forecast_cache: dict = {}   # {gid: (result, expires_at)}
+_FORECAST_TTL = 600   # 10 min
+
+@flask_app.route('/api/forecast')
+@require_auth
+def api_forecast():
+    """
+    Compute historical DAU (30 days) + 7-day forecast via EMA (alpha=0.3).
+    ?guild_id=X
+    Response: {
+      history: [{date, dau}],          # last 30 days actual
+      forecast: [{date, dau, is_forecast: true}]  # next 7 days predicted
+    }
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    _cached = _forecast_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    now   = datetime.now(THAI_TZ)
+    gdata = user_daily.get(gid, {})
+    # Build 30-day actual DAU
+    history = []
+    for i in range(30 - 1, -1, -1):
+        d = (now - timedelta(days=i)).strftime('%Y-%m-%d')
+        dau_ud = sum(1 for udata in gdata.values() if d in udata.get('dates', {}))
+        dau_du = len(daily_unique.get(gid, {}).get(d, []))
+        dau    = max(dau_ud, dau_du)
+        history.append({'date': d, 'dau': dau, 'is_forecast': False})
+    # EMA forecast (alpha=0.3)
+    alpha = 0.3
+    ema   = history[-1]['dau'] if history else 0
+    for h in history[-7:]:   # warm up on last 7 actual values
+        ema = alpha * h['dau'] + (1 - alpha) * ema
+    forecast = []
+    for i in range(1, 8):
+        fd  = (now + timedelta(days=i)).strftime('%Y-%m-%d')
+        ema = max(0, round(ema))   # can't be negative
+        forecast.append({'date': fd, 'dau': int(ema), 'is_forecast': True})
+        ema = alpha * ema + (1 - alpha) * ema  # project forward (self-referential)
+    result = {'history': history, 'forecast': forecast}
+    _forecast_cache[gid] = (result, time.monotonic() + _FORECAST_TTL)
+    return jsonify(result)
+
+# ── Cohort retention matrix ───────────────────────────────────────────────────
+_cohort_cache: dict = {}   # {(gid, cohort_weeks, retain_weeks): (result, expires_at)}
+_COHORT_TTL = 600
+
+@flask_app.route('/api/cohort')
+@require_auth
+def api_cohort():
+    """
+    Cohort retention matrix.
+    ?guild_id=X&cohort_weeks=8&retain_weeks=6
+    For each cohort week: what % of users came back in subsequent weeks.
+    Response: {
+      cohorts: [{cohort_week, users, weeks: [{offset, retained, pct}]}]
+    }
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        cohort_weeks = max(2, min(int(request.args.get('cohort_weeks', 8)), 16))
+        retain_weeks = max(2, min(int(request.args.get('retain_weeks', 6)), 8))
+    except ValueError:
+        return jsonify({'error': 'invalid params'}), 400
+    _key = (gid, cohort_weeks, retain_weeks)
+    _cached = _cohort_cache.get(_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    now    = datetime.now(THAI_TZ)
+    today  = now.date()
+    monday = today - timedelta(days=today.weekday())
+    gdata  = user_daily.get(gid, {})
+    # Build week-uid map from user_daily
+    def week_of(date_str: str) -> str:
+        try:
+            d  = datetime.strptime(date_str, '%Y-%m-%d').date()
+            wk = d - timedelta(days=d.weekday())
+            return wk.strftime('%Y-%m-%d')
+        except Exception:
+            return ''
+    cohorts = []
+    for c in range(cohort_weeks - 1, -1, -1):
+        cohort_monday = monday - timedelta(weeks=c)
+        cohort_week_s = cohort_monday.strftime('%Y-%m-%d')
+        cohort_monday_end = cohort_monday + timedelta(days=7)
+        # users whose first_seen falls in this cohort week
+        cohort_uids = set()
+        for uid, udata in gdata.items():
+            fs = udata.get('first_seen', '')
+            if not fs:
+                continue
+            try:
+                fs_d = datetime.fromisoformat(fs).date()
+                if cohort_monday <= fs_d < cohort_monday_end:
+                    cohort_uids.add(uid)
+            except Exception:
+                continue
+        if not cohort_uids:
+            continue
+        # For each subsequent week, what % of cohort was active?
+        weeks_data = []
+        for offset in range(retain_weeks):
+            tgt_monday = cohort_monday + timedelta(weeks=offset)
+            tgt_end    = tgt_monday + timedelta(days=7)
+            if tgt_monday > today:
+                break
+            tgt_s = tgt_monday.strftime('%Y-%m-%d')
+            tgt_e = tgt_end.strftime('%Y-%m-%d')
+            retained = sum(
+                1 for uid in cohort_uids
+                if any(tgt_s <= d < tgt_e for d in gdata.get(uid, {}).get('dates', {}))
+            )
+            pct = round(retained / len(cohort_uids) * 100) if cohort_uids else 0
+            weeks_data.append({'offset': offset, 'retained': retained, 'pct': pct})
+        cohorts.append({
+            'cohort_week': cohort_week_s,
+            'users':       len(cohort_uids),
+            'weeks':       weeks_data,
+        })
+    result = {'cohorts': cohorts, 'retain_weeks': retain_weeks}
+    _cohort_cache[_key] = (result, time.monotonic() + _COHORT_TTL)
+    return jsonify(result)
+
+# ── Time-of-day: avg sessions per hour (24h profile) ─────────────────────────
+_tod_cache: dict = {}   # {gid: (result, expires_at)}
+_TOD_TTL = 300
+
+@flask_app.route('/api/time-of-day')
+@require_auth
+def api_time_of_day():
+    """
+    Average number of sessions starting per hour of day (0–23) across all history.
+    ?guild_id=X
+    Response: [{hour, avg_sessions, total_sessions}]  (24 entries)
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    _cached = _tod_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    counts  = [0] * 24   # raw session count per hour
+    days_seen = set()
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    for s in hist:
+        try:
+            jt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            counts[jt.hour] += 1
+            days_seen.add(jt.strftime('%Y-%m-%d'))
+        except Exception:
+            pass
+    total_days = max(len(days_seen), 1)
+    result = [
+        {
+            'hour':           h,
+            'avg_sessions':   round(counts[h] / total_days, 2),
+            'total_sessions': counts[h],
+        }
+        for h in range(24)
+    ]
+    _tod_cache[gid] = (result, time.monotonic() + _TOD_TTL)
+    return jsonify(result)
+
+# ── Churn risk: users with declining activity trend ───────────────────────────
+_churn_cache: dict = {}   # {gid: (result, expires_at)}
+_CHURN_TTL = 600
+
+@flask_app.route('/api/churn-risk')
+@require_auth
+def api_churn_risk():
+    """
+    Score each user's churn risk based on activity ratio (recent 30d vs prior 30d).
+    ?guild_id=X&limit=20
+    risk_score: 0.0–1.0  (1.0 = highest risk)
+    risk_level: 'low'|'medium'|'high'
+    Response: [{uid, name, last_seen, sessions_recent, sessions_prior,
+                risk_score, risk_level, days_since_last}]
+    Only includes users who were active in prior 60d but declining.
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        limit = max(5, min(int(request.args.get('limit', 20)), 50))
+    except ValueError:
+        return jsonify({'error': 'invalid limit'}), 400
+    _cached = _churn_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0][:limit])
+    now     = datetime.now(THAI_TZ)
+    today_s = now.strftime('%Y-%m-%d')
+    d30_s   = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+    d60_s   = (now - timedelta(days=60)).strftime('%Y-%m-%d')
+    result  = []
+    for uid, udata in user_daily.get(gid, {}).items():
+        dates = udata.get('dates', {})
+        if not dates:
+            continue
+        # sessions in recent 30d vs prior 30d
+        recent = sum(c for d, c in dates.items() if d30_s <= d <= today_s)
+        prior  = sum(c for d, c in dates.items() if d60_s <= d <  d30_s)
+        if prior == 0:   # no prior activity → skip (new or always absent)
+            continue
+        # risk = how much they dropped (0 = same, 1 = gone completely)
+        risk_score = round(1 - min(recent / prior, 1), 3)
+        if risk_score < 0.3:   # not concerning
+            continue
+        risk_level = 'high' if risk_score >= 0.7 else 'medium' if risk_score >= 0.5 else 'low'
+        last_seen_str = udata.get('last_seen', '')
+        try:
+            ls      = datetime.fromisoformat(last_seen_str)
+            days_off= (now - ls).days if ls.tzinfo else (now - ls.replace(tzinfo=THAI_TZ)).days
+        except Exception:
+            days_off = 0
+        result.append({
+            'uid':             uid,
+            'name':            udata.get('name', 'Unknown'),
+            'last_seen':       last_seen_str[:10],
+            'sessions_recent': recent,
+            'sessions_prior':  prior,
+            'risk_score':      risk_score,
+            'risk_level':      risk_level,
+            'days_since_last': days_off,
+        })
+    result.sort(key=lambda x: (-x['risk_score'], -x['days_since_last']))
+    _churn_cache[gid] = (result, time.monotonic() + _CHURN_TTL)
+    return jsonify(result[:limit])
+
+# ── All-time records ──────────────────────────────────────────────────────────
+_records_cache: dict = {}   # {gid: (result, expires_at)}
+_RECORDS_TTL = 300
+
+@flask_app.route('/api/records')
+@require_auth
+def api_records():
+    """
+    All-time records for a guild.
+    ?guild_id=X
+    Response: {
+      longest_session: {name, seconds, duration, date, channel},
+      peak_dau_day:    {date, dau},
+      first_session:   {name, date, channel},
+      most_active_day: {date, sessions},
+      top_user_alltime:{name, seconds, duration},
+      peak_concurrent: {count, date},
+    }
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    _cached = _records_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    # Longest session
+    longest = max(hist, key=lambda s: s.get('seconds', 0), default=None)
+    longest_rec = None
+    if longest:
+        longest_rec = {
+            'name':     longest.get('name', 'Unknown'),
+            'seconds':  longest.get('seconds', 0),
+            'duration': format_duration(longest.get('seconds', 0)),
+            'date':     longest.get('join', '')[:10],
+            'channel':  longest.get('channel', ''),
+        }
+    # First session ever
+    first = min(hist, key=lambda s: s.get('join', '9999'), default=None)
+    first_rec = None
+    if first:
+        first_rec = {
+            'name':    first.get('name', 'Unknown'),
+            'date':    first.get('join', '')[:10],
+            'channel': first.get('channel', ''),
+        }
+    # Most active day (most sessions in one day)
+    day_counts: dict = {}
+    for s in hist:
+        d = s.get('join', '')[:10]
+        if d:
+            day_counts[d] = day_counts.get(d, 0) + 1
+    most_active = max(day_counts.items(), key=lambda x: x[1], default=(None, 0))
+    most_active_rec = {'date': most_active[0], 'sessions': most_active[1]} if most_active[0] else None
+    # Peak DAU day (from daily_unique)
+    gdu    = daily_unique.get(gid, {})
+    peak_day = max(gdu.items(), key=lambda x: len(x[1]), default=(None, []))
+    peak_dau_rec = {'date': peak_day[0], 'dau': len(peak_day[1])} if peak_day[0] else None
+    # Top user alltime (from user_daily)
+    gdata = user_daily.get(gid, {})
+    top_uid = max(gdata.items(), key=lambda x: x[1].get('alltime_seconds', 0), default=(None, {}))
+    top_user_rec = None
+    if top_uid[0]:
+        secs = top_uid[1].get('alltime_seconds', 0)
+        top_user_rec = {
+            'name':     top_uid[1].get('name', 'Unknown'),
+            'seconds':  secs,
+            'duration': format_duration(secs),
+        }
+    # Peak concurrent (estimate from session_history — find the time slice with most overlaps)
+    # Simplified: pick the hour with the most join events as proxy
+    hour_counts: dict = {}
+    for s in hist:
+        try:
+            jt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M')
+            key = jt.strftime('%Y-%m-%d %H')
+            hour_counts[key] = hour_counts.get(key, 0) + 1
+        except Exception:
+            pass
+    peak_hour_key = max(hour_counts.items(), key=lambda x: x[1], default=(None, 0))
+    peak_conc_rec = {'count': peak_hour_key[1], 'date': peak_hour_key[0]} if peak_hour_key[0] else None
+    result = {
+        'longest_session':  longest_rec,
+        'first_session':    first_rec,
+        'most_active_day':  most_active_rec,
+        'peak_dau_day':     peak_dau_rec,
+        'top_user_alltime': top_user_rec,
+        'peak_concurrent':  peak_conc_rec,
+    }
+    _records_cache[gid] = (result, time.monotonic() + _RECORDS_TTL)
     return jsonify(result)
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -54,6 +54,11 @@
       <li><a href="#ct-channel-details-section"><i class="ph-bold ph-chart-bar" aria-hidden="true"></i> Channel Analytics</a></li>
       <li><a href="#ct-copresence-section"><i class="ph-bold ph-users-three" aria-hidden="true"></i> Voice Buddies</a></li>
       <li><a href="#ct-milestone-section"><i class="ph-bold ph-medal" aria-hidden="true"></i> Hall of Fame</a></li>
+      <li><a href="#ct-forecast-section"><i class="ph-bold ph-trend-up" aria-hidden="true"></i> DAU Forecast</a></li>
+      <li><a href="#ct-tod-section"><i class="ph-bold ph-clock" aria-hidden="true"></i> Time of Day</a></li>
+      <li><a href="#ct-churn-section"><i class="ph-bold ph-warning" aria-hidden="true"></i> Churn Risk</a></li>
+      <li><a href="#ct-cohort-section"><i class="ph-bold ph-table" aria-hidden="true"></i> Cohort</a></li>
+      <li><a href="#ct-records-section"><i class="ph-bold ph-trophy" aria-hidden="true"></i> Hall of Records</a></li>
       <li><a href="#ct-notion-section"><i class="ph-bold ph-notion-logo" aria-hidden="true"></i> Notion Sync</a></li>
       <li><a href="#ct-members-section"><i class="ph-bold ph-users" aria-hidden="true"></i> สมาชิกทั้งหมด</a></li>
       <li><a href="#ct-votes-section"><i class="ph-bold ph-thumbs-up" aria-hidden="true"></i> คะแนนมุข</a></li>
@@ -520,6 +525,61 @@
       </div>
       <div class="card-body">
         <div id="milestoneLogWrap"><span class="empty-msg">ยังไม่มี milestone</span></div>
+      </div>
+    </section>
+
+    <!-- 12a. DAU Forecast -->
+    <section class="card" id="ct-forecast-section" aria-labelledby="ct-forecast">
+      <div class="card-header">
+        <div class="card-icon" style="background:var(--yellow,#f59e0b)" aria-hidden="true"><i class="ph-bold ph-trend-up"></i></div>
+        <h2 class="card-title" id="ct-forecast">DAU Forecast — 7 วันข้างหน้า</h2>
+      </div>
+      <div class="card-body">
+        <div id="forecastWrap"><span class="empty-msg">กำลังโหลด...</span></div>
+      </div>
+    </section>
+
+    <!-- 12b. Time-of-day profile -->
+    <section class="card" id="ct-tod-section" aria-labelledby="ct-tod">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-clock"></i></div>
+        <h2 class="card-title" id="ct-tod">กิจกรรมตามช่วงเวลา (24h)</h2>
+      </div>
+      <div class="card-body">
+        <div id="timeOfDayWrap"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
+      </div>
+    </section>
+
+    <!-- 12c. Churn risk -->
+    <section class="card" id="ct-churn-section" aria-labelledby="ct-churn">
+      <div class="card-header">
+        <div class="card-icon" style="background:var(--red,#ef4444)" aria-hidden="true"><i class="ph-bold ph-warning"></i></div>
+        <h2 class="card-title" id="ct-churn">Churn Risk</h2>
+      </div>
+      <div class="card-body">
+        <div id="churnRiskWrap"><span class="empty-msg">กำลังวิเคราะห์...</span></div>
+      </div>
+    </section>
+
+    <!-- 12d. Cohort retention matrix -->
+    <section class="card" id="ct-cohort-section" aria-labelledby="ct-cohort">
+      <div class="card-header">
+        <div class="card-icon" style="background:var(--purple,#7c3aed)" aria-hidden="true"><i class="ph-bold ph-table"></i></div>
+        <h2 class="card-title" id="ct-cohort">Cohort Retention Matrix</h2>
+      </div>
+      <div class="card-body" style="padding:0;overflow-x:auto">
+        <div id="cohortWrap" style="padding:12px"><span class="empty-msg">ยังไม่มีข้อมูลพอ</span></div>
+      </div>
+    </section>
+
+    <!-- 12e. All-time records -->
+    <section class="card" id="ct-records-section" aria-labelledby="ct-records">
+      <div class="card-header">
+        <div class="card-icon" style="background:#d97706" aria-hidden="true"><i class="ph-bold ph-trophy"></i></div>
+        <h2 class="card-title" id="ct-records">Hall of Records — สถิติสูงสุดตลอดกาล</h2>
+      </div>
+      <div class="card-body">
+        <div id="recordsWrap"><span class="empty-msg">กำลังโหลด...</span></div>
       </div>
     </section>
 

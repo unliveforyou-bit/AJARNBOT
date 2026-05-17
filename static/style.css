@@ -1012,4 +1012,63 @@ body.light .ms-row:hover { background:rgba(0,0,0,.06); }
 .card-icon.green { background: #16a34a; }
 
 /* ── Purple accent for co-presence ────────────────────────────────────────── */
-:root { --purple: #7c3aed; }
+:root { --purple: #7c3aed; --red: #ef4444; --yellow: #f59e0b; }
+
+/* ── Cohort retention matrix ───────────────────────────────────────────────── */
+.cohort-wrap { overflow-x:auto; }
+.cohort-table { border-collapse:collapse; font-size:12px; min-width:400px; width:100%; }
+.cohort-table th {
+  padding:7px 10px; text-align:center; font-size:10px; font-weight:600;
+  color:var(--muted); text-transform:uppercase; letter-spacing:.05em;
+  border-bottom:1px solid var(--border); white-space:nowrap;
+}
+.cohort-table th:first-child,.cohort-table th:nth-child(2) { text-align:left; }
+.cohort-table td { padding:0; }
+.cohort-week { padding:7px 10px; font-weight:600; font-size:12px; white-space:nowrap; }
+.cohort-n    { padding:7px 10px; color:var(--muted); font-size:12px; }
+.cohort-cell {
+  padding:7px 6px; text-align:center; font-size:11px; font-weight:600;
+  min-width:48px; border-radius:0; transition:opacity .15s;
+}
+.cohort-cell:hover { opacity:.8; }
+body.light .cohort-table th { border-color:var(--border); }
+
+/* ── Churn risk ────────────────────────────────────────────────────────────── */
+.churn-list { display:flex; flex-direction:column; gap:7px; }
+.churn-row  {
+  display:grid; align-items:center;
+  grid-template-columns:20px 1fr auto auto 52px;
+  gap:8px; font-size:12px;
+}
+.churn-name { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.churn-meta { font-size:11px; white-space:nowrap; }
+.churn-bar-bg   { height:5px; border-radius:3px; background:rgba(255,255,255,.08); overflow:hidden; }
+.churn-bar-fill { height:100%; border-radius:3px; transition:width .3s; }
+.churn-badge    { font-size:10px; font-weight:700; text-align:right; white-space:nowrap; }
+body.light .churn-bar-bg { background:rgba(0,0,0,.08); }
+
+/* ── All-time records grid ─────────────────────────────────────────────────── */
+.records-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
+  gap:12px;
+}
+.record-card {
+  background:rgba(255,255,255,.04); border:1px solid var(--border);
+  border-radius:12px; padding:14px 12px;
+  display:flex; flex-direction:column; gap:3px;
+  transition:border-color .15s, background .15s;
+}
+.record-card:hover { border-color:var(--accent); background:rgba(88,101,242,.06); }
+.record-icon  { font-size:20px; color:var(--accent); margin-bottom:4px; }
+.record-val   { font-size:16px; font-weight:700; line-height:1.2; }
+.record-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
+.record-sub   { font-size:11px; color:var(--muted); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+body.light .record-card { background:var(--surface); }
+body.light .record-card:hover { background:rgba(88,101,242,.05); }
+
+/* ── Forecast SVG ──────────────────────────────────────────────────────────── */
+#forecastWrap svg text { font-family:inherit; }
+
+/* ── Time-of-day SVG ───────────────────────────────────────────────────────── */
+#timeOfDayWrap svg text { font-family:inherit; }

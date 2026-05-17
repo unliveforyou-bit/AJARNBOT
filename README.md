@@ -8,8 +8,8 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 ![discord.py](https://img.shields.io/badge/discord.py-2.3+-5865F2?style=flat&logo=discord&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.0+-000000?style=flat&logo=flask&logoColor=white)
 ![Railway](https://img.shields.io/badge/Deploy-Railway-0B0D0E?style=flat&logo=railway&logoColor=white)
-![Version](https://img.shields.io/badge/Version-3.1.0-58a6ff?style=flat)
-![Tests](https://img.shields.io/badge/Tests-93%20passed-3fb950?style=flat)
+![Version](https://img.shields.io/badge/Version-3.2.0-58a6ff?style=flat)
+![Tests](https://img.shields.io/badge/Tests-98%20passed-3fb950?style=flat)
 
 ---
 
@@ -275,8 +275,76 @@ Python ถูกสร้างโดยใคร|Guido van Rossum
 
 ## 📋 Changelog
 
+### v3.2.0 — Analytics Suite (20 New Features)
+> `HEAD` · 2026-05-18
+
+เพิ่ม **20 features ใหม่** แบ่งเป็น 2 batches — dashboard analytics ครบวงจรสำหรับ Discord Voice stats
+
+#### Batch 1 — Community Analytics (commit `6a87eb1`)
+
+**📡 Backend Endpoints**
+
+| Endpoint | คำอธิบาย |
+|----------|----------|
+| `GET /api/user-growth` | New vs returning users per week (12w, EMA-cached 5m) |
+| `GET /api/channel-details` | Extended per-channel: unique_users, avg_min, peak_hour, top_user (cached 2m) |
+| `GET /api/copresence` | Top user pairs by voice session overlap — O(n²), capped 5000 sessions (cached 10m) |
+| `GET /api/milestone-log` | All milestone awards for a guild, sorted by hours desc |
+| `GET /api/voice-now` | Live voice snapshot: channel grouping, avatar, alltime stats |
+
+**🖥️ Frontend Functions**
+
+| Function | คำอธิบาย |
+|----------|----------|
+| `loadUserGrowth()` | Stacked SVG bar chart — new (green) vs returning (accent) users per week |
+| `loadChannelDetails()` | Extended table: sessions, unique users, avg duration, peak_hour, top user |
+| `loadCoPresence()` | "Voice Buddies" — ranked pair list with co-presence count bar |
+| `loadMilestoneLog()` | Hall of Fame card with milestone icons 🌱⭐🔥💎👑🏆 |
+| `loadLiveVoice()` | Live voice ticker polling every 10s, grouped by channel with avatars |
+
+---
+
+#### Batch 2 — Predictive & Deep Analytics (commit `HEAD`)
+
+**📡 Backend Endpoints**
+
+| Endpoint | คำอธิบาย |
+|----------|----------|
+| `GET /api/forecast` | 7-day DAU forecast via EMA (α=0.3), 30-day history + projection (cached 10m) |
+| `GET /api/cohort` | Cohort retention matrix — users active in week X vs week X+N (cached 10m) |
+| `GET /api/time-of-day` | Avg sessions per hour (24h profile) across all history (cached 5m) |
+| `GET /api/churn-risk` | Churn risk score per user (ratio 30d vs prior 30d; threshold 0.3+, cached 10m) |
+| `GET /api/records` | All-time records: longest session, busiest day, peak DAU, top user, first session (cached 5m) |
+
+**🖥️ Frontend Functions**
+
+| Function | คำอธิบาย |
+|----------|----------|
+| `loadForecast()` | DAU chart + dashed forecast line 7 วัน (yellow) ต่อจาก history (accent) |
+| `loadCohortMatrix()` | Heat grid N×M: cohort week × retention offset, สี = % retained |
+| `loadTimeOfDay()` | 24-bar chart — peak hour highlighted (yellow), day/night distinction |
+| `loadChurnRisk()` | At-risk users list: risk badge low/medium/high + days since last active |
+| `loadRecords()` | "Hall of Records" 3×2 card grid — all-time stats highlights |
+
+**📊 Dashboard Cards เพิ่ม (10 ใบ)**
+
+- Live Voice, User Growth, Channel Analytics, Voice Buddies, Hall of Fame *(Batch 1)*
+- DAU Forecast, Time of Day, Churn Risk, Cohort Retention, Hall of Records *(Batch 2)*
+
+**⚙️ Polling intervals**
+
+| Function | Interval |
+|----------|----------|
+| `loadLiveVoice` | 10s (real-time) |
+| `loadChannelDetails` | 2m |
+| `loadTimeOfDay`, `loadUserGrowth`, `loadRecords` | 5m |
+| `loadInactive`, `loadRetention`, `loadMilestoneLog` | 5m |
+| `loadDAU`, `loadForecast`, `loadCohortMatrix`, `loadCoPresence`, `loadChurnRisk` | 10m |
+
+---
+
 ### v3.1.0 — Performance & Refactor
-> `HEAD` · 2026-05-17
+> `4c875ad` · 2026-05-17
 
 **⚡ Performance**
 - **Notion N+1 batch fix** — `_notion_bulk_find_pages()` รวม OR-filter สูงสุด 100 uid ต่อ request แทนที่ N HTTP calls ต่อ guild
