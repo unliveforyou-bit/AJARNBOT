@@ -128,7 +128,7 @@
 
     <button id="themeBtn" onclick="toggleTheme()" aria-label="สลับเป็นธีมสว่าง"><i class="ph-bold ph-moon" aria-hidden="true"></i></button>
 
-    <span id="roleBadge" role="img" style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;color:white;"></span>
+    <span id="roleBadge" aria-live="polite" style="font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;color:white;"></span>
 
     <nav aria-label="การนำทาง" style="display:contents">
       <a href="/invite" target="_blank" rel="noopener noreferrer" class="invite-btn" aria-label="เพิ่ม Server เปิดในแท็บใหม่">
@@ -474,13 +474,13 @@
       <div style="padding:8px 16px 0">
         <div class="history-search-wrap">
           <i class="ph-bold ph-magnifying-glass history-search-icon" aria-hidden="true"></i>
-          <input type="search" id="historySearch" class="history-search" placeholder="ค้นหาชื่อ หรือ channel..." aria-label="ค้นหา Session" oninput="filterHistory(this.value)">
+          <input type="search" id="historySearch" class="history-search" placeholder="ค้นหาชื่อ หรือ channel..." aria-label="ค้นหา Session" oninput="_debouncedFilterHistory(this.value)">
         </div>
       </div>
       <div class="card-body" style="padding:0">
         <div class="history-wrap">
           <table>
-            <caption>ประวัติการเข้า-ออก Voice Channel ล่าสุด 50 รายการ</caption>
+            <caption>ประวัติการเข้า-ออก Voice Channel ล่าสุด 200 รายการ</caption>
             <thead><tr>
               <th scope="col">ชื่อ</th>
               <th scope="col">ห้อง</th>
@@ -654,7 +654,7 @@
       <div class="card-body" style="padding:16px">
         <div class="members-search-wrap">
           <i class="ph-bold ph-magnifying-glass members-search-icon" aria-hidden="true"></i>
-          <input id="membersSearch" class="members-search" type="search" placeholder="ค้นหาชื่อสมาชิก..." oninput="filterMembers(this.value)" aria-label="ค้นหาสมาชิก">
+          <input id="membersSearch" class="members-search" type="search" placeholder="ค้นหาชื่อสมาชิก..." oninput="_debouncedFilterMembers(this.value)" aria-label="ค้นหาสมาชิก">
         </div>
         <div id="membersList" class="members-list" role="list"><span class="empty-msg">กำลังโหลด...</span></div>
       </div>
@@ -807,7 +807,7 @@
 <!-- Toast -->
 <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
-<script>window.CURRENT_GUILD_ID = '{{ current_guild_id }}';</script>
+<script>window.CURRENT_GUILD_ID = {{ current_guild_id | tojson }};</script>
 <script src="/static/script.js"></script>
 <script>if('serviceWorker' in navigator){navigator.serviceWorker.register('/sw.js');}</script>
 </body>

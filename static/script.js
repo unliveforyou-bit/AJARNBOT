@@ -35,12 +35,17 @@ const SPAM_NUMBERS=[
   {key:'spam_max_events',label:'Anti-spam: ครั้งสูงสุด',min:2,max:30},
   {key:'spam_window_sec',label:'Anti-spam: ช่วงเวลา (วิ)',min:10,max:300},
 ];
+let _toastTimer=null;
 function showToast(msg,err=false){
   const t=document.getElementById('toast');t.textContent=msg;
-  t.className='toast show'+(err?' err':'');setTimeout(()=>t.className='toast',2200);
+  t.className='toast show'+(err?' err':'');
+  clearTimeout(_toastTimer);_toastTimer=setTimeout(()=>t.className='toast',2200);
 }
+let _loadGeneration=0;
 function escHTML(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
+const _debouncedFilterHistory=debounce(v=>filterHistory(v),150);
+const _debouncedFilterMembers=debounce(v=>filterMembers(v),150);
 function withLoading(btn,fn){
   if(!btn)return fn();
   const orig=btn.innerHTML;
@@ -137,7 +142,8 @@ async function loadChannelDropdowns(guildId, savedVoice, savedContent, savedStat
     return;
   }
   try{
-    const r=await fetch('/api/channels?guild_id='+guildId);
+    const r=await fetch('/api/channels?guild_id='+encodeURIComponent(guildId));
+    if(!r.ok)throw new Error(r.status);
     const channels=await r.json();
     const opts='<option value="">— ยังไม่เลือก —</option>'+channels.map(c=>`<option value="${escHTML(c.id)}">#${escHTML(c.name)}</option>`).join('');
     ids.forEach((id,i)=>{
@@ -174,14 +180,14 @@ async function loadGuilds(){
 }
 async function switchGuild(guildId){
   if(!guildId)return;
+  const gen=++_loadGeneration;
   try{
     await _post('/api/set-guild',{guild_id:guildId});
+    if(gen!==_loadGeneration)return; // user switched again before response
     currentGuildId=guildId;
     sessionStorage.setItem('currentGuildId',guildId);
-    // sync config-area dropdown + reload config/channels for new guild
     const sel=document.getElementById('guildSelect');
     if(sel){sel.value=guildId;await onGuildChange();}
-    // reload all data panels
     refreshStatus();loadHeatmap();loadHistory();loadContribGraph();loadVotes();
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
     loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();
@@ -192,19 +198,23 @@ async function switchGuild(guildId){
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
 async function loadGlobalChannels(){
-  const r=await fetch('/api/config');const cfg=await r.json();
-  // For global, show all channels from first available guild
-  const guilds_r=await fetch('/api/guilds');const guilds=await guilds_r.json();
-  const gid=guilds.length?guilds[0].id:'';
-  await loadChannelDropdowns(gid,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
+  try{
+    const r=await fetch('/api/config');if(!r.ok)throw new Error(r.status);const cfg=await r.json();
+    const guilds_r=await fetch('/api/guilds');if(!guilds_r.ok)throw new Error(guilds_r.status);const guilds=await guilds_r.json();
+    const gid=guilds.length?guilds[0].id:'';
+    await loadChannelDropdowns(gid,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
+  }catch(e){showToast('โหลด config ไม่ได้',true);}
 }
 async function onGuildChange(){
   currentGuildId=document.getElementById('guildSelect').value;
   if(!currentGuildId){await loadGlobalChannels();return;}
-  const r=await fetch('/api/guild-config?guild_id='+currentGuildId);
-  const cfg=await r.json();
-  applyConfig(cfg);  // update toggles + number inputs for this guild
-  await loadChannelDropdowns(currentGuildId,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
+  try{
+    const r=await fetch('/api/guild-config?guild_id='+encodeURIComponent(currentGuildId));
+    if(!r.ok)throw new Error(r.status);
+    const cfg=await r.json();
+    applyConfig(cfg);
+    await loadChannelDropdowns(currentGuildId,cfg.channel_voice,cfg.channel_content,cfg.channel_stats);
+  }catch(e){showToast('โหลด guild config ไม่ได้',true);}
 }
 function _configUrl(extraBody={}){
   // Route saves: guild-config when guild selected, global config when owner + no guild
@@ -265,8 +275,11 @@ async function saveChannels(btn){
   });
 }
 async function action(type){
-  const r=await _post('/api/action/'+type,{guild_id:currentGuildId||null});
-  const d=await r.json();showToast(d.ok?'ส่งแล้ว!':'เกิดข้อผิดพลาด',!d.ok);
+  try{
+    const r=await _post('/api/action/'+type,{guild_id:currentGuildId||null});
+    if(!r.ok)throw new Error(r.status);
+    const d=await r.json();showToast(d.ok?'ส่งแล้ว!':'เกิดข้อผิดพลาด',!d.ok);
+  }catch(e){showToast('เกิดข้อผิดพลาด',true);}
 }
 async function refreshStatus(){
   if(!currentGuildId)return;
@@ -688,12 +701,12 @@ async function loadRetention(){
   if(!d||!d.length||d.every(w=>w.active_count===0)){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
   wrap.innerHTML=d.map((w,i)=>{
     const pct=w.retention_pct!==null?w.retention_pct:null;
-    const h=pct!==null?Math.max(Math.round(pct/100*46),2):4;
+    const scale=i>0&&pct!==null?(Math.max(pct,0)/100).toFixed(3):'0.04';
     const lbl=w.week_start.slice(5);// MM-DD
     const title=lbl+'\nActive: '+w.active_count+(pct!==null?'\nRetention: '+pct+'%':'');
     return'<div class="retention-col" title="'+escHTML(title)+'">'
       +(i>0?'<div class="retention-pct">'+(pct!==null?pct+'%':'—')+'</div>':'<div class="retention-pct">—</div>')
-      +'<div class="retention-bar-bg"><div class="retention-bar-fill" style="height:'+(i>0&&pct!==null?h:4)+'px"></div></div>'
+      +'<div class="retention-bar-bg"><div class="retention-bar-fill" style="transform:scaleY('+scale+')"></div></div>'
       +'<div class="retention-week">'+escHTML(lbl)+'</div>'
       +'</div>';
   }).join('');
@@ -1099,12 +1112,12 @@ async function loadRecords(){
   let d;try{const r=await fetch('/api/records?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   if(!d){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
   const cards=[
-    {icon:'ph-timer',label:'Session ยาวที่สุด',val:d.longest_session?.duration||'-',sub:d.longest_session?escHTML(d.longest_session.name)+' · '+d.longest_session.date:''},
-    {icon:'ph-calendar-star',label:'วันที่คึกคักสุด',val:d.most_active_day?.sessions?d.most_active_day.sessions+' sessions':'-',sub:d.most_active_day?.date||''},
-    {icon:'ph-users',label:'Peak DAU',val:d.peak_dau_day?.dau?d.peak_dau_day.dau+' คน':'-',sub:d.peak_dau_day?.date||''},
-    {icon:'ph-crown',label:'Top User ตลอดกาล',val:d.top_user_alltime?.duration||'-',sub:d.top_user_alltime?escHTML(d.top_user_alltime.name):''},
-    {icon:'ph-flag',label:'Session แรกของ Server',val:d.first_session?.date||'-',sub:d.first_session?escHTML(d.first_session.name)+' · '+escHTML(d.first_session.channel):''},
-    {icon:'ph-lightning',label:'Peak Concurrent (est.)',val:d.peak_concurrent?.count?d.peak_concurrent.count+' sessions/hr':'-',sub:d.peak_concurrent?.date||''},
+    {icon:'ph-timer',label:'Session ยาวที่สุด',val:escHTML(d.longest_session?.duration||'-'),sub:d.longest_session?escHTML(d.longest_session.name)+' · '+escHTML(d.longest_session.date):''},
+    {icon:'ph-calendar-star',label:'วันที่คึกคักสุด',val:d.most_active_day?.sessions?escHTML(String(d.most_active_day.sessions))+' sessions':'-',sub:escHTML(d.most_active_day?.date||'')},
+    {icon:'ph-users',label:'Peak DAU',val:d.peak_dau_day?.dau?escHTML(String(d.peak_dau_day.dau))+' คน':'-',sub:escHTML(d.peak_dau_day?.date||'')},
+    {icon:'ph-crown',label:'Top User ตลอดกาล',val:escHTML(d.top_user_alltime?.duration||'-'),sub:d.top_user_alltime?escHTML(d.top_user_alltime.name):''},
+    {icon:'ph-flag',label:'Session แรกของ Server',val:escHTML(d.first_session?.date||'-'),sub:d.first_session?escHTML(d.first_session.name)+' · '+escHTML(d.first_session.channel):''},
+    {icon:'ph-lightning',label:'Peak Concurrent (est.)',val:d.peak_concurrent?.count?escHTML(String(d.peak_concurrent.count))+' sessions/hr':'-',sub:escHTML(d.peak_concurrent?.date||'')},
   ];
   wrap.innerHTML='<div class="records-grid">'
     +cards.map(c=>'<div class="record-card">'
@@ -1121,8 +1134,7 @@ async function loadGuildHealth(){
   if(!currentGuildId)return;
   const wrap=document.getElementById('guildHealthWrap');if(!wrap)return;
   let d;try{const r=await fetch('/api/guild-health?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
-  const labelCls={Excellent:'health-excellent',Good:'health-good',Fair:'health-fair','At Risk':'health-risk'};
-  const pct=d.health_score;
+  const pct=Math.round(Number(d.health_score)||0);
   wrap.innerHTML=`
   <div class="health-score-wrap">
     <div class="health-gauge"><svg viewBox="0 0 120 70" aria-hidden="true">
@@ -1133,11 +1145,11 @@ async function loadGuildHealth(){
       <text x="60" y="70" text-anchor="middle" class="gauge-label">${escHTML(d.label)}</text>
     </svg></div>
     <div class="health-bars">
-      ${[['DAU Trend',(d.dau_trend+1)/2],['Retention',d.retention_score],['Stability',1-d.churn_score],['Growth',d.growth_score]].map(([lbl,v])=>`
+      ${[['DAU Trend',((d.dau_trend??0)+1)/2],['Retention',d.retention_score??0],['Stability',1-(d.churn_score??0)],['Growth',d.growth_score??0]].map(([lbl,v])=>{const pv=Math.round(Math.max(0,Math.min(1,v))*100);return`
       <div class="hbar-row"><span class="hbar-lbl">${lbl}</span>
-        <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(v*100)}%"></div></div>
-        <span class="hbar-val">${Math.round(v*100)}%</span>
-      </div>`).join('')}
+        <div class="hbar-track"><div class="hbar-fill" style="width:${pv}%"></div></div>
+        <span class="hbar-val">${pv}%</span>
+      </div>`}).join('')}
     </div>
   </div>`;
 }
@@ -1149,7 +1161,7 @@ async function loadUserCompare(){
   const ia=document.getElementById('compareUidA'),ib=document.getElementById('compareUidB');
   const uid_a=(ia?.value||'').trim(),uid_b=(ib?.value||'').trim();
   if(!uid_a||!uid_b){wrap.innerHTML='<span class="empty-msg">กรอก User ID ทั้งคู่</span>';return;}
-  let d;try{const r=await fetch(`/api/user-compare?guild_id=${currentGuildId}&uid_a=${uid_a}&uid_b=${uid_b}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
+  let d;try{const r=await fetch(`/api/user-compare?guild_id=${encodeURIComponent(currentGuildId)}&uid_a=${encodeURIComponent(uid_a)}&uid_b=${encodeURIComponent(uid_b)}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
   function _col(s){
     return`<div class="cmp-col">
       <div class="cmp-name">${escHTML(s.name)}</div>
@@ -1181,14 +1193,14 @@ async function loadSessionDay(){
   const wrap=document.getElementById('sessionDayWrap');if(!wrap)return;
   const inp=document.getElementById('sessionDayDate');
   const date=inp?.value||new Date().toISOString().slice(0,10);
-  let rows;try{const r=await fetch(`/api/session-day?guild_id=${currentGuildId}&date=${date}`);if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
+  let rows;try{const r=await fetch(`/api/session-day?guild_id=${encodeURIComponent(currentGuildId)}&date=${encodeURIComponent(date)}`);if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
   if(!rows.length){wrap.innerHTML='<span class="empty-msg">ไม่มี session วันนี้</span>';return;}
   wrap.innerHTML='<div class="sday-list">'
     +rows.map(s=>`<div class="sday-row">
-      <span class="sday-time">${s.join.slice(11,16)}</span>
+      <span class="sday-time">${escHTML(s.join.slice(11,16))}</span>
       <span class="sday-name">${escHTML(s.name)}</span>
       <span class="sday-ch">${escHTML(s.channel)}</span>
-      <span class="sday-dur">${s.duration}</span>
+      <span class="sday-dur">${escHTML(s.duration)}</span>
     </div>`).join('')+'</div>';
 }
 
@@ -1203,8 +1215,8 @@ async function loadMarathon(){
       <span class="marathon-rank">${i+1}</span>
       <span class="marathon-name">${escHTML(s.name)}</span>
       <span class="marathon-ch">${escHTML(s.channel)}</span>
-      <span class="marathon-dur">${s.duration}</span>
-      <span class="marathon-date">${s.date}</span>
+      <span class="marathon-dur">${escHTML(s.duration)}</span>
+      <span class="marathon-date">${escHTML(s.date)}</span>
     </div>`).join('')+'</div>';
 }
 
@@ -1231,7 +1243,7 @@ async function loadUserHeatmap(){
   const inp=document.getElementById('userHeatmapUid');
   const uid=(inp?.value||'').trim();
   if(!uid){wrap.innerHTML='<span class="empty-msg">กรอก User ID</span>';return;}
-  let d;try{const r=await fetch(`/api/user-heatmap?guild_id=${currentGuildId}&uid=${uid}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
+  let d;try{const r=await fetch(`/api/user-heatmap?guild_id=${encodeURIComponent(currentGuildId)}&uid=${encodeURIComponent(uid)}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
   const mx=Math.max(1,...d.matrix.flat());
   const cells=d.days.map((day,di)=>`<div class="uhm-row">
     <span class="uhm-day">${day}</span>
@@ -1263,14 +1275,14 @@ async function loadPeakSummary(){
   if(!currentGuildId)return;
   const wrap=document.getElementById('peakSummaryWrap');if(!wrap)return;
   let d;try{const r=await fetch('/api/peak-summary?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
-  const fmt=h=>`${String(h).padStart(2,'0')}:00`;
+  const fmt=h=>h!=null?`${String(Number(h)).padStart(2,'0')}:00`:'-';
   wrap.innerHTML=`<div class="peak-grid">
-    <div class="peak-card"><div class="peak-val">${fmt(d.busiest_hour)}</div><div class="peak-lbl">Busiest Hour<br><small>${d.busiest_hour_count} sessions</small></div></div>
+    <div class="peak-card"><div class="peak-val">${fmt(d.busiest_hour)}</div><div class="peak-lbl">Busiest Hour<br><small>${escHTML(String(d.busiest_hour_count??'-'))} sessions</small></div></div>
     <div class="peak-card"><div class="peak-val">${fmt(d.quietest_hour)}</div><div class="peak-lbl">Quietest Hour</div></div>
-    <div class="peak-card"><div class="peak-val">${escHTML(d.busiest_dow_label)}</div><div class="peak-lbl">Busiest Day</div></div>
-    <div class="peak-card"><div class="peak-val">${d.most_active_date||'-'}</div><div class="peak-lbl">Most Active Date<br><small>${d.most_active_sessions} sessions</small></div></div>
-    <div class="peak-card"><div class="peak-val">${d.avg_session_min} m</div><div class="peak-lbl">Avg Session</div></div>
-    <div class="peak-card"><div class="peak-val">${d.total_users}</div><div class="peak-lbl">Total Users</div></div>
+    <div class="peak-card"><div class="peak-val">${escHTML(d.busiest_dow_label??'-')}</div><div class="peak-lbl">Busiest Day</div></div>
+    <div class="peak-card"><div class="peak-val">${escHTML(d.most_active_date||'-')}</div><div class="peak-lbl">Most Active Date<br><small>${escHTML(String(d.most_active_sessions??'-'))} sessions</small></div></div>
+    <div class="peak-card"><div class="peak-val">${escHTML(String(d.avg_session_min??'-'))} m</div><div class="peak-lbl">Avg Session</div></div>
+    <div class="peak-card"><div class="peak-val">${escHTML(String(d.total_users??'-'))}</div><div class="peak-lbl">Total Users</div></div>
   </div>`;
 }
 
@@ -1280,7 +1292,7 @@ async function loadVoiceOverlapTimeline(){
   const wrap=document.getElementById('overlapTimelineWrap');if(!wrap)return;
   const inp=document.getElementById('overlapDate');
   const date=inp?.value||new Date().toISOString().slice(0,10);
-  let d;try{const r=await fetch(`/api/voice-overlap-timeline?guild_id=${currentGuildId}&date=${date}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  let d;try{const r=await fetch(`/api/voice-overlap-timeline?guild_id=${encodeURIComponent(currentGuildId)}&date=${encodeURIComponent(date)}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   const bkts=d.buckets;
   const maxC=Math.max(1,...bkts.map(b=>b.count));
   const W=600,H=100,pad=4;
