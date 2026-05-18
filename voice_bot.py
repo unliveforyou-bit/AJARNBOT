@@ -4263,6 +4263,562 @@ def api_records():
     _records_cache[gid] = (result, time.monotonic() + _RECORDS_TTL)
     return jsonify(result)
 
+# ── Guild health score ────────────────────────────────────────────────────────
+_health_cache: dict = {}   # {gid: (result, expires_at)}
+_HEALTH_TTL = 300
+
+@flask_app.route('/api/guild-health')
+@require_auth
+def api_guild_health():
+    """
+    Guild health score 0-100 combining DAU trend, retention, churn, and growth.
+    ?guild_id=X
+    Response: {health_score, dau_trend, retention_score, churn_score, growth_score, label}
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    _cached = _health_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    now   = datetime.now(THAI_TZ)
+    today = now.date()
+    # DAU trend: last14d → last7 avg vs prev7 avg
+    gdu   = daily_unique.get(gid, {})
+    def _dau(offset_days):
+        d = (today - timedelta(days=offset_days)).strftime('%Y-%m-%d')
+        return len(gdu.get(d, []))
+    last7  = sum(_dau(i) for i in range(0, 7))  / 7
+    prev7  = sum(_dau(i) for i in range(7, 14)) / 7
+    dau_trend = (last7 - prev7) / max(prev7, 1)
+    dau_trend = max(-1.0, min(1.0, dau_trend))
+    # Retention: users active last week who were also active the prior week
+    this_week_start = (today - timedelta(days=today.weekday())).strftime('%Y-%m-%d')
+    prev_week_start = (today - timedelta(days=today.weekday() + 7)).strftime('%Y-%m-%d')
+    prev_week_end   = this_week_start
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    uids_this  = {s['uid'] for s in hist if s.get('join', '') >= this_week_start}
+    uids_prev  = {s['uid'] for s in hist if prev_week_start <= s.get('join', '') < prev_week_end}
+    retention_score = len(uids_this & uids_prev) / max(len(uids_prev), 1)
+    retention_score = min(1.0, retention_score)
+    # Churn score: fraction of users with high drop-off (recent 30d vs prior 30d)
+    d30_s = (now - timedelta(days=30)).strftime('%Y-%m-%d')
+    d60_s = (now - timedelta(days=60)).strftime('%Y-%m-%d')
+    today_s = today.strftime('%Y-%m-%d')
+    high_risk = 0
+    total_eligible = 0
+    for uid, udata in user_daily.get(gid, {}).items():
+        dates = udata.get('dates', {})
+        prior  = sum(c for d, c in dates.items() if d60_s <= d < d30_s)
+        if prior == 0:
+            continue
+        recent = sum(c for d, c in dates.items() if d30_s <= d <= today_s)
+        risk   = 1 - min(recent / prior, 1)
+        total_eligible += 1
+        if risk >= 0.7:
+            high_risk += 1
+    churn_score = high_risk / max(total_eligible, 1)
+    # Growth: new users this week / total users ever
+    gdata = user_daily.get(gid, {})
+    new_this_week = sum(
+        1 for udata in gdata.values()
+        if udata.get('first_seen', '') >= this_week_start
+    )
+    growth_score = min(new_this_week / max(len(gdata), 1), 1.0)
+    # Composite health score
+    dau_norm = (dau_trend + 1) / 2
+    health_score = round((0.35 * dau_norm + 0.35 * retention_score +
+                          0.20 * (1 - churn_score) + 0.10 * growth_score) * 100)
+    health_score = max(0, min(100, health_score))
+    if   health_score >= 80: label = 'Excellent'
+    elif health_score >= 60: label = 'Good'
+    elif health_score >= 40: label = 'Fair'
+    else:                    label = 'At Risk'
+    result = {
+        'health_score':     health_score,
+        'dau_trend':        round(dau_trend, 3),
+        'retention_score':  round(retention_score, 3),
+        'churn_score':      round(churn_score, 3),
+        'growth_score':     round(growth_score, 3),
+        'label':            label,
+    }
+    _health_cache[gid] = (result, time.monotonic() + _HEALTH_TTL)
+    return jsonify(result)
+
+# ── User compare ──────────────────────────────────────────────────────────────
+@flask_app.route('/api/user-compare')
+@require_auth
+def api_user_compare():
+    """
+    Side-by-side stats for two users.
+    ?guild_id=X&uid_a=A&uid_b=B
+    Response: {uid_a: {...stats}, uid_b: {...stats}}
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid   = str(guild_id)
+    uid_a = request.args.get('uid_a', '').strip()
+    uid_b = request.args.get('uid_b', '').strip()
+    if not uid_a or not uid_b:
+        return jsonify({'error': 'uid_a and uid_b required'}), 400
+    now    = datetime.now(THAI_TZ)
+    d7_s   = (now - timedelta(days=7)).strftime('%Y-%m-%d')
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    def _build_stats(uid):
+        gdata = user_daily.get(gid, {})
+        udata = gdata.get(uid, {})
+        name  = udata.get('name', 'Unknown')
+        secs  = udata.get('alltime_seconds', 0)
+        sessions = udata.get('session_count', 0)
+        streak   = udata.get('streak_max', 0)
+        active_d = len(udata.get('dates', {}))
+        first    = udata.get('first_seen', '')[:10]
+        last     = udata.get('last_seen', '')[:10]
+        # favorite channel
+        ch_cnt: dict = {}
+        last7  = 0
+        for s in hist:
+            if str(s.get('uid', '')) != uid:
+                continue
+            ch = s.get('channel', '')
+            ch_cnt[ch] = ch_cnt.get(ch, 0) + 1
+            if s.get('join', '') >= d7_s:
+                last7 += 1
+        fav_ch = max(ch_cnt, key=ch_cnt.get, default='—')
+        return {
+            'uid':              uid,
+            'name':             name,
+            'alltime_seconds':  secs,
+            'duration':         format_duration(secs),
+            'session_count':    sessions,
+            'streak_max':       streak,
+            'active_days':      active_d,
+            'first_seen':       first,
+            'last_seen':        last,
+            'favorite_channel': fav_ch,
+            'last_7d_sessions': last7,
+        }
+    return jsonify({'uid_a': _build_stats(uid_a), 'uid_b': _build_stats(uid_b)})
+
+# ── Current streak leaderboard ────────────────────────────────────────────────
+_strk_cache: dict = {}   # {(gid, limit): (result, expires_at)}
+_STRK_TTL = 300
+
+@flask_app.route('/api/streak-board')
+@require_auth
+def api_streak_board():
+    """
+    Leaderboard ranked by CURRENT active streak (consecutive days ending today or yesterday).
+    ?guild_id=X&limit=10
+    Response: [{uid, name, current_streak, last_seen, alltime_seconds, duration}]
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        limit = max(3, min(int(request.args.get('limit', 10)), 50))
+    except ValueError:
+        return jsonify({'error': 'invalid limit'}), 400
+    _key = (gid, limit)
+    _cached = _strk_cache.get(_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    today = datetime.now(THAI_TZ).date()
+    result = []
+    for uid, udata in user_daily.get(gid, {}).items():
+        dates_sorted = sorted(udata.get('dates', {}).keys(), reverse=True)
+        if not dates_sorted:
+            continue
+        streak = 0
+        try:
+            last_date = datetime.strptime(dates_sorted[0], '%Y-%m-%d').date()
+        except Exception:
+            continue
+        # Only count if last active is today or yesterday
+        if (today - last_date).days > 1:
+            result.append({'uid': uid, 'name': udata.get('name', '?'), 'current_streak': 0,
+                           'last_seen': dates_sorted[0],
+                           'alltime_seconds': udata.get('alltime_seconds', 0),
+                           'duration': format_duration(udata.get('alltime_seconds', 0))})
+            continue
+        streak = 1
+        for i in range(1, len(dates_sorted)):
+            try:
+                d = datetime.strptime(dates_sorted[i], '%Y-%m-%d').date()
+            except Exception:
+                break
+            expected = last_date - timedelta(days=1)
+            if d == expected:
+                streak += 1
+                last_date = d
+            else:
+                break
+        result.append({
+            'uid':             uid,
+            'name':            udata.get('name', '?'),
+            'current_streak':  streak,
+            'last_seen':       dates_sorted[0],
+            'alltime_seconds': udata.get('alltime_seconds', 0),
+            'duration':        format_duration(udata.get('alltime_seconds', 0)),
+        })
+    result.sort(key=lambda x: (-x['current_streak'], -x['alltime_seconds']))
+    _strk_cache[_key] = (result[:limit], time.monotonic() + _STRK_TTL)
+    return jsonify(result[:limit])
+
+# ── Session-day timeline ──────────────────────────────────────────────────────
+@flask_app.route('/api/session-day')
+@require_auth
+def api_session_day():
+    """
+    All voice sessions for a specific date.
+    ?guild_id=X&date=YYYY-MM-DD
+    Response: [{uid, name, channel, join, leave, seconds, duration}]
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid  = str(guild_id)
+    date = request.args.get('date', '').strip()
+    if not date:
+        return jsonify({'error': 'date required'}), 400
+    try:
+        datetime.strptime(date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'invalid date format, use YYYY-MM-DD'}), 400
+    with _lock_history:
+        hist = [s for s in session_history
+                if str(s.get('guild_id', '')) == gid and s.get('join', '').startswith(date)]
+    hist.sort(key=lambda s: s.get('join', ''))
+    return jsonify([{
+        'uid':      s.get('uid', ''),
+        'name':     s.get('name', 'Unknown'),
+        'channel':  s.get('channel', ''),
+        'join':     s.get('join', ''),
+        'leave':    s.get('leave', ''),
+        'seconds':  s.get('seconds', 0),
+        'duration': format_duration(s.get('seconds', 0)),
+    } for s in hist])
+
+# ── Marathon sessions (≥3h) ───────────────────────────────────────────────────
+_marathon_cache: dict = {}   # {(gid, limit): (result, expires_at)}
+_MARATHON_TTL = 300
+
+@flask_app.route('/api/marathon')
+@require_auth
+def api_marathon():
+    """
+    Sessions lasting 3+ hours, sorted longest first.
+    ?guild_id=X&limit=20
+    Response: [{uid, name, channel, date, join, leave, seconds, duration}]
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        limit = max(5, min(int(request.args.get('limit', 20)), 100))
+    except ValueError:
+        return jsonify({'error': 'invalid limit'}), 400
+    _key = (gid, limit)
+    _cached = _marathon_cache.get(_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    with _lock_history:
+        hist = [s for s in session_history
+                if str(s.get('guild_id', '')) == gid and s.get('seconds', 0) >= 10800]
+    hist.sort(key=lambda s: s.get('seconds', 0), reverse=True)
+    result = [{
+        'uid':      s.get('uid', ''),
+        'name':     s.get('name', 'Unknown'),
+        'channel':  s.get('channel', ''),
+        'date':     s.get('join', '')[:10],
+        'join':     s.get('join', ''),
+        'leave':    s.get('leave', ''),
+        'seconds':  s.get('seconds', 0),
+        'duration': format_duration(s.get('seconds', 0)),
+    } for s in hist[:limit]]
+    _marathon_cache[_key] = (result, time.monotonic() + _MARATHON_TTL)
+    return jsonify(result)
+
+# ── Engagement score ──────────────────────────────────────────────────────────
+_engage_cache: dict = {}   # {(gid, limit): (result, expires_at)}
+_ENGAGE_TTL = 300
+
+@flask_app.route('/api/engagement-score')
+@require_auth
+def api_engagement_score():
+    """
+    Per-user engagement score (0-100) combining hours, sessions, streak, active days.
+    ?guild_id=X&limit=20
+    Response: [{uid, name, score, alltime_seconds, duration, session_count, streak_max, active_days}]
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        limit = max(5, min(int(request.args.get('limit', 20)), 100))
+    except ValueError:
+        return jsonify({'error': 'invalid limit'}), 400
+    _key = (gid, limit)
+    _cached = _engage_cache.get(_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    result = []
+    for uid, udata in user_daily.get(gid, {}).items():
+        secs     = udata.get('alltime_seconds', 0)
+        sessions = udata.get('session_count', 0)
+        streak   = udata.get('streak_max', 0)
+        days     = len(udata.get('dates', {}))
+        hours_n  = min(secs / 3600 / 100, 1.0)
+        sess_n   = min(sessions / 200, 1.0)
+        strk_n   = min(streak / 30, 1.0)
+        days_n   = min(days / 90, 1.0)
+        score    = round((0.35 * hours_n + 0.30 * sess_n + 0.20 * strk_n + 0.15 * days_n) * 100, 1)
+        result.append({
+            'uid':             uid,
+            'name':            udata.get('name', '?'),
+            'score':           score,
+            'alltime_seconds': secs,
+            'duration':        format_duration(secs),
+            'session_count':   sessions,
+            'streak_max':      streak,
+            'active_days':     days,
+        })
+    result.sort(key=lambda x: -x['score'])
+    _engage_cache[_key] = (result[:limit], time.monotonic() + _ENGAGE_TTL)
+    return jsonify(result[:limit])
+
+# ── Per-user DOW × hour heatmap ───────────────────────────────────────────────
+_uheat_cache: dict = {}   # {(gid, uid): (result, expires_at)}
+_UHEAT_TTL = 300
+
+@flask_app.route('/api/user-heatmap')
+@require_auth
+def api_user_heatmap():
+    """
+    Day-of-week × hour heatmap for a specific user.
+    ?guild_id=X&uid=UID
+    Response: {uid, name, matrix: [[int]*24]*7, days, total_sessions}
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    uid = request.args.get('uid', '').strip()
+    if not uid:
+        return jsonify({'error': 'uid required'}), 400
+    _key = (gid, uid)
+    _cached = _uheat_cache.get(_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    matrix = [[0] * 24 for _ in range(7)]
+    name   = user_daily.get(gid, {}).get(uid, {}).get('name', uid)
+    total  = 0
+    with _lock_history:
+        hist = [s for s in session_history
+                if str(s.get('guild_id', '')) == gid and str(s.get('uid', '')) == uid]
+    for s in hist:
+        try:
+            jt  = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            dow = jt.weekday()   # 0=Mon
+            matrix[dow][jt.hour] += 1
+            total += 1
+        except Exception:
+            pass
+    result = {
+        'uid':            uid,
+        'name':           name,
+        'matrix':         matrix,
+        'days':           ['จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส', 'อา'],
+        'total_sessions': total,
+    }
+    _uheat_cache[_key] = (result, time.monotonic() + _UHEAT_TTL)
+    return jsonify(result)
+
+# ── New-user journey (onboarding funnel) ──────────────────────────────────────
+_journey_cache: dict = {}   # {(gid, cohort_weeks): (result, expires_at)}
+_JOURNEY_TTL = 600
+
+@flask_app.route('/api/new-user-journey')
+@require_auth
+def api_new_user_journey():
+    """
+    Onboarding funnel for users who joined in the last N weeks.
+    ?guild_id=X&cohort_weeks=8
+    Response: [{uid, name, first_seen, first_session_date, days_to_second,
+                sessions_in_first_30d, retained_week1}]
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        cohort_weeks = max(2, min(int(request.args.get('cohort_weeks', 8)), 52))
+    except ValueError:
+        return jsonify({'error': 'invalid cohort_weeks'}), 400
+    _key = (gid, cohort_weeks)
+    _cached = _journey_cache.get(_key)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    cutoff = (datetime.now(THAI_TZ) - timedelta(weeks=cohort_weeks)).strftime('%Y-%m-%d')
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    # Group sessions by uid
+    uid_sessions: dict = {}
+    for s in hist:
+        u = str(s.get('uid', ''))
+        uid_sessions.setdefault(u, []).append(s.get('join', ''))
+    result = []
+    for uid, udata in user_daily.get(gid, {}).items():
+        fs = udata.get('first_seen', '')[:10]
+        if not fs or fs < cutoff:
+            continue
+        joins = sorted(uid_sessions.get(uid, []))
+        if not joins:
+            continue
+        first_sess = joins[0][:10]
+        # days to second session (different day)
+        unique_days = sorted({j[:10] for j in joins})
+        days_to_second = None
+        if len(unique_days) >= 2:
+            try:
+                d1 = datetime.strptime(unique_days[0], '%Y-%m-%d').date()
+                d2 = datetime.strptime(unique_days[1], '%Y-%m-%d').date()
+                days_to_second = (d2 - d1).days
+            except Exception:
+                pass
+        # sessions in first 30 days
+        try:
+            d_first = datetime.strptime(first_sess, '%Y-%m-%d').date()
+            d_30    = (d_first + timedelta(days=30)).strftime('%Y-%m-%d')
+            sess_30 = sum(1 for j in joins if j[:10] <= d_30)
+        except Exception:
+            sess_30 = len(joins)
+        # retained in week 1 (days 7-14 from first session)
+        try:
+            d_w1s = (d_first + timedelta(days=7)).strftime('%Y-%m-%d')
+            d_w1e = (d_first + timedelta(days=14)).strftime('%Y-%m-%d')
+            retained_w1 = any(d_w1s <= j[:10] <= d_w1e for j in joins)
+        except Exception:
+            retained_w1 = False
+        result.append({
+            'uid':                   uid,
+            'name':                  udata.get('name', '?'),
+            'first_seen':            fs,
+            'first_session_date':    first_sess,
+            'days_to_second':        days_to_second,
+            'sessions_in_first_30d': sess_30,
+            'retained_week1':        retained_w1,
+        })
+    result.sort(key=lambda x: x['first_seen'])
+    _journey_cache[_key] = (result, time.monotonic() + _JOURNEY_TTL)
+    return jsonify(result)
+
+# ── Peak hours summary ────────────────────────────────────────────────────────
+_peak_cache: dict = {}   # {gid: (result, expires_at)}
+_PEAK_TTL = 300
+
+@flask_app.route('/api/peak-summary')
+@require_auth
+def api_peak_summary():
+    """
+    Guild peak activity summary KPIs.
+    ?guild_id=X
+    Response: {busiest_hour, busiest_hour_count, quietest_hour, busiest_dow,
+               busiest_dow_label, most_active_date, most_active_sessions,
+               avg_session_min, total_sessions, total_users}
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    _cached = _peak_cache.get(gid)
+    if _cached and time.monotonic() < _cached[1]:
+        return jsonify(_cached[0])
+    with _lock_history:
+        hist = [s for s in session_history if str(s.get('guild_id', '')) == gid]
+    hour_cnt = [0] * 24
+    dow_cnt  = [0] * 7
+    day_cnt: dict = {}
+    total_sec = 0
+    uids: set = set()
+    for s in hist:
+        try:
+            jt = datetime.strptime(s['join'], '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ)
+            hour_cnt[jt.hour]           += 1
+            dow_cnt[jt.weekday()]       += 1
+            d = jt.strftime('%Y-%m-%d')
+            day_cnt[d] = day_cnt.get(d, 0) + 1
+            total_sec += s.get('seconds', 0)
+            uids.add(str(s.get('uid', '')))
+        except Exception:
+            pass
+    busiest_hour  = int(hour_cnt.index(max(hour_cnt))) if any(hour_cnt) else 0
+    quietest_hour = int(hour_cnt.index(min(hour_cnt))) if any(hour_cnt) else 0
+    busiest_dow   = int(dow_cnt.index(max(dow_cnt)))   if any(dow_cnt)  else 0
+    dow_labels    = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัส', 'ศุกร์', 'เสาร์', 'อาทิตย์']
+    most_active_d = max(day_cnt.items(), key=lambda x: x[1], default=(None, 0))
+    n = len(hist)
+    result = {
+        'busiest_hour':        busiest_hour,
+        'busiest_hour_count':  hour_cnt[busiest_hour],
+        'quietest_hour':       quietest_hour,
+        'busiest_dow':         busiest_dow,
+        'busiest_dow_label':   dow_labels[busiest_dow],
+        'most_active_date':    most_active_d[0],
+        'most_active_sessions':most_active_d[1],
+        'avg_session_min':     round(total_sec / 60 / max(n, 1), 1),
+        'total_sessions':      n,
+        'total_users':         len(uids),
+    }
+    _peak_cache[gid] = (result, time.monotonic() + _PEAK_TTL)
+    return jsonify(result)
+
+# ── Voice overlap timeline (concurrent users per 15-min bucket) ───────────────
+@flask_app.route('/api/voice-overlap-timeline')
+@require_auth
+def api_voice_overlap_timeline():
+    """
+    Concurrent user count per 15-minute bucket for a given date.
+    ?guild_id=X&date=YYYY-MM-DD  (defaults to today)
+    Response: {date, buckets: [{time, count}]}  (96 entries)
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid  = str(guild_id)
+    date = request.args.get('date', datetime.now(THAI_TZ).strftime('%Y-%m-%d')).strip()
+    try:
+        base_dt = datetime.strptime(date, '%Y-%m-%d')
+    except ValueError:
+        return jsonify({'error': 'invalid date format, use YYYY-MM-DD'}), 400
+    with _lock_history:
+        hist = [s for s in session_history
+                if str(s.get('guild_id', '')) == gid and s.get('join', '').startswith(date)]
+    # Parse sessions into datetime pairs
+    parsed = []
+    for s in hist:
+        try:
+            j = datetime.strptime(s['join'],  '%Y-%m-%d %H:%M')
+            l = datetime.strptime(s['leave'], '%Y-%m-%d %H:%M')
+            if j <= l:
+                parsed.append((j, l))
+        except Exception:
+            pass
+    buckets = []
+    for b in range(96):   # 0..95 → 00:00..23:45
+        bstart = base_dt + timedelta(minutes=b * 15)
+        bend   = bstart  + timedelta(minutes=15)
+        count  = sum(1 for (j, l) in parsed if j < bend and l > bstart)
+        buckets.append({'time': bstart.strftime('%H:%M'), 'count': count})
+    return jsonify({'date': date, 'buckets': buckets})
+
 # ─────────────────────────────────────────────────────────────────────────────
 
 @flask_app.route('/api/trivia-scores')

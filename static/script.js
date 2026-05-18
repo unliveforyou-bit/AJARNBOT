@@ -187,6 +187,7 @@ async function switchGuild(guildId){
     loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();
     loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
     loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();
+    loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
 }
@@ -1115,6 +1116,189 @@ async function loadRecords(){
     +'</div>';
 }
 
+// ── Guild Health Score ────────────────────────────────────────────────────────
+async function loadGuildHealth(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('guildHealthWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/guild-health?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  const labelCls={Excellent:'health-excellent',Good:'health-good',Fair:'health-fair','At Risk':'health-risk'};
+  const pct=d.health_score;
+  wrap.innerHTML=`
+  <div class="health-score-wrap">
+    <div class="health-gauge"><svg viewBox="0 0 120 70" aria-hidden="true">
+      <path d="M10,60 A50,50 0 0,1 110,60" fill="none" stroke="var(--border)" stroke-width="10" stroke-linecap="round"/>
+      <path d="M10,60 A50,50 0 0,1 110,60" fill="none" stroke="var(--accent)" stroke-width="10" stroke-linecap="round"
+        stroke-dasharray="${(pct/100)*157} 157" style="transition:stroke-dasharray 0.8s ease"/>
+      <text x="60" y="58" text-anchor="middle" class="gauge-num">${pct}</text>
+      <text x="60" y="70" text-anchor="middle" class="gauge-label">${escHTML(d.label)}</text>
+    </svg></div>
+    <div class="health-bars">
+      ${[['DAU Trend',(d.dau_trend+1)/2],['Retention',d.retention_score],['Stability',1-d.churn_score],['Growth',d.growth_score]].map(([lbl,v])=>`
+      <div class="hbar-row"><span class="hbar-lbl">${lbl}</span>
+        <div class="hbar-track"><div class="hbar-fill" style="width:${Math.round(v*100)}%"></div></div>
+        <span class="hbar-val">${Math.round(v*100)}%</span>
+      </div>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ── User Compare ──────────────────────────────────────────────────────────────
+async function loadUserCompare(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('userCompareWrap');if(!wrap)return;
+  const ia=document.getElementById('compareUidA'),ib=document.getElementById('compareUidB');
+  const uid_a=(ia?.value||'').trim(),uid_b=(ib?.value||'').trim();
+  if(!uid_a||!uid_b){wrap.innerHTML='<span class="empty-msg">กรอก User ID ทั้งคู่</span>';return;}
+  let d;try{const r=await fetch(`/api/user-compare?guild_id=${currentGuildId}&uid_a=${uid_a}&uid_b=${uid_b}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
+  function _col(s){
+    return`<div class="cmp-col">
+      <div class="cmp-name">${escHTML(s.name)}</div>
+      <div class="cmp-uid">${escHTML(s.uid)}</div>
+      ${[['⏱ เวลารวม',s.duration],['🎮 Sessions',s.session_count],['🔥 Streak Max',s.streak_max+' วัน'],['📅 วันที่ active',s.active_days],['⚡ 7 วันล่าสุด',s.last_7d_sessions+' sess'],['📍 ห้องโปรด',s.favorite_channel],['🗓 เริ่มต้น',s.first_seen],['🕐 ล่าสุด',s.last_seen]].map(([k,v])=>`<div class="cmp-row"><span class="cmp-key">${k}</span><span class="cmp-val">${escHTML(String(v??'-'))}</span></div>`).join('')}
+    </div>`;
+  }
+  wrap.innerHTML=`<div class="cmp-grid">${_col(d.uid_a)}${_col(d.uid_b)}</div>`;
+}
+
+// ── Streak Board ──────────────────────────────────────────────────────────────
+async function loadStreakBoard(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('streakBoardWrap');if(!wrap)return;
+  let rows;try{const r=await fetch('/api/streak-board?guild_id='+currentGuildId+'&limit=10');if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
+  if(!rows.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  wrap.innerHTML='<div class="strk-list">'
+    +rows.map((u,i)=>`<div class="strk-row">
+      <span class="strk-rank">${i+1}</span>
+      <span class="strk-name">${escHTML(u.name)}</span>
+      <span class="strk-streak">${u.current_streak}<small> วัน</small></span>
+      <span class="strk-total">${u.duration}</span>
+    </div>`).join('')+'</div>';
+}
+
+// ── Session Day Timeline ───────────────────────────────────────────────────────
+async function loadSessionDay(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('sessionDayWrap');if(!wrap)return;
+  const inp=document.getElementById('sessionDayDate');
+  const date=inp?.value||new Date().toISOString().slice(0,10);
+  let rows;try{const r=await fetch(`/api/session-day?guild_id=${currentGuildId}&date=${date}`);if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
+  if(!rows.length){wrap.innerHTML='<span class="empty-msg">ไม่มี session วันนี้</span>';return;}
+  wrap.innerHTML='<div class="sday-list">'
+    +rows.map(s=>`<div class="sday-row">
+      <span class="sday-time">${s.join.slice(11,16)}</span>
+      <span class="sday-name">${escHTML(s.name)}</span>
+      <span class="sday-ch">${escHTML(s.channel)}</span>
+      <span class="sday-dur">${s.duration}</span>
+    </div>`).join('')+'</div>';
+}
+
+// ── Marathon Sessions ─────────────────────────────────────────────────────────
+async function loadMarathon(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('marathonWrap');if(!wrap)return;
+  let rows;try{const r=await fetch('/api/marathon?guild_id='+currentGuildId+'&limit=15');if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
+  if(!rows.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มี session 3 ชม.+</span>';return;}
+  wrap.innerHTML='<div class="marathon-list">'
+    +rows.map((s,i)=>`<div class="marathon-row">
+      <span class="marathon-rank">${i+1}</span>
+      <span class="marathon-name">${escHTML(s.name)}</span>
+      <span class="marathon-ch">${escHTML(s.channel)}</span>
+      <span class="marathon-dur">${s.duration}</span>
+      <span class="marathon-date">${s.date}</span>
+    </div>`).join('')+'</div>';
+}
+
+// ── Engagement Score ──────────────────────────────────────────────────────────
+async function loadEngagementScore(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('engagementWrap');if(!wrap)return;
+  let rows;try{const r=await fetch('/api/engagement-score?guild_id='+currentGuildId+'&limit=15');if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
+  if(!rows.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  const max=rows[0].score||1;
+  wrap.innerHTML='<div class="eng-list">'
+    +rows.map((u,i)=>`<div class="eng-row">
+      <span class="eng-rank">${i+1}</span>
+      <span class="eng-name">${escHTML(u.name)}</span>
+      <div class="eng-bar-wrap"><div class="eng-bar" style="width:${(u.score/max*100).toFixed(1)}%"></div></div>
+      <span class="eng-score">${u.score}</span>
+    </div>`).join('')+'</div>';
+}
+
+// ── Per-user Heatmap ──────────────────────────────────────────────────────────
+async function loadUserHeatmap(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('userHeatmapWrap');if(!wrap)return;
+  const inp=document.getElementById('userHeatmapUid');
+  const uid=(inp?.value||'').trim();
+  if(!uid){wrap.innerHTML='<span class="empty-msg">กรอก User ID</span>';return;}
+  let d;try{const r=await fetch(`/api/user-heatmap?guild_id=${currentGuildId}&uid=${uid}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
+  const mx=Math.max(1,...d.matrix.flat());
+  const cells=d.days.map((day,di)=>`<div class="uhm-row">
+    <span class="uhm-day">${day}</span>
+    ${d.matrix[di].map(v=>`<div class="uhm-cell" style="opacity:${v?0.2+0.8*(v/mx):0.04}" title="${v}"></div>`).join('')}
+  </div>`).join('');
+  wrap.innerHTML=`<div class="uhm-title">${escHTML(d.name)} — ${d.total_sessions} sessions</div>
+  <div class="uhm-grid">${cells}</div>
+  <div class="uhm-hours">${Array.from({length:24},(_,h)=>`<span>${h}</span>`).join('')}</div>`;
+}
+
+// ── New User Journey ──────────────────────────────────────────────────────────
+async function loadNewUserJourney(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('journeyWrap');if(!wrap)return;
+  let rows;try{const r=await fetch('/api/new-user-journey?guild_id='+currentGuildId+'&cohort_weeks=8');if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
+  if(!rows.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มี new users</span>';return;}
+  wrap.innerHTML='<div class="journey-list">'
+    +rows.map(u=>`<div class="journey-row">
+      <span class="journey-name">${escHTML(u.name)}</span>
+      <span class="journey-joined">${u.first_seen}</span>
+      <span class="journey-d2">${u.days_to_second!=null?u.days_to_second+'d':'-'}</span>
+      <span class="journey-s30">${u.sessions_in_first_30d} sess</span>
+      <span class="journey-ret ${u.retained_week1?'ret-yes':'ret-no'}">${u.retained_week1?'✓':'✗'}</span>
+    </div>`).join('')+'</div>';
+}
+
+// ── Peak Summary ──────────────────────────────────────────────────────────────
+async function loadPeakSummary(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('peakSummaryWrap');if(!wrap)return;
+  let d;try{const r=await fetch('/api/peak-summary?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  const fmt=h=>`${String(h).padStart(2,'0')}:00`;
+  wrap.innerHTML=`<div class="peak-grid">
+    <div class="peak-card"><div class="peak-val">${fmt(d.busiest_hour)}</div><div class="peak-lbl">Busiest Hour<br><small>${d.busiest_hour_count} sessions</small></div></div>
+    <div class="peak-card"><div class="peak-val">${fmt(d.quietest_hour)}</div><div class="peak-lbl">Quietest Hour</div></div>
+    <div class="peak-card"><div class="peak-val">${escHTML(d.busiest_dow_label)}</div><div class="peak-lbl">Busiest Day</div></div>
+    <div class="peak-card"><div class="peak-val">${d.most_active_date||'-'}</div><div class="peak-lbl">Most Active Date<br><small>${d.most_active_sessions} sessions</small></div></div>
+    <div class="peak-card"><div class="peak-val">${d.avg_session_min} m</div><div class="peak-lbl">Avg Session</div></div>
+    <div class="peak-card"><div class="peak-val">${d.total_users}</div><div class="peak-lbl">Total Users</div></div>
+  </div>`;
+}
+
+// ── Voice Overlap Timeline ────────────────────────────────────────────────────
+async function loadVoiceOverlapTimeline(){
+  if(!currentGuildId)return;
+  const wrap=document.getElementById('overlapTimelineWrap');if(!wrap)return;
+  const inp=document.getElementById('overlapDate');
+  const date=inp?.value||new Date().toISOString().slice(0,10);
+  let d;try{const r=await fetch(`/api/voice-overlap-timeline?guild_id=${currentGuildId}&date=${date}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  const bkts=d.buckets;
+  const maxC=Math.max(1,...bkts.map(b=>b.count));
+  const W=600,H=100,pad=4;
+  const bw=(W-2*pad)/bkts.length;
+  const bars=bkts.map((b,i)=>{
+    const bh=maxC?Math.round((b.count/maxC)*(H-20)):0;
+    const x=pad+i*bw;const y=H-bh-4;
+    return`<rect x="${x.toFixed(1)}" y="${y}" width="${(bw-1).toFixed(1)}" height="${bh}" fill="var(--accent)" opacity="0.7" rx="1"><title>${b.time}: ${b.count}</title></rect>`;
+  }).join('');
+  // hour labels every 4 buckets = every hour
+  const xlbls=bkts.filter((_,i)=>i%4===0).map((b,i)=>{
+    const x=pad+(i*4)*bw+bw*2;
+    return`<text x="${x.toFixed(1)}" y="${H}" font-size="9" fill="var(--muted)" text-anchor="middle">${b.time}</text>`;
+  }).join('');
+  wrap.innerHTML=`<div class="overlap-date-lbl">${d.date}</div>
+  <svg viewBox="0 0 ${W} ${H+4}" class="overlap-svg" aria-label="concurrent users timeline">${bars}${xlbls}</svg>`;
+}
+
 if(localStorage.getItem('theme')==='light'){document.body.classList.add('light');const btn=document.getElementById('themeBtn');btn.innerHTML='<i class="ph-bold ph-sun" aria-hidden="true"></i>';btn.setAttribute('aria-label','สลับเป็นธีมมืด');}
 
 // ── Sidebar navigation ──
@@ -1152,6 +1336,7 @@ loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetenti
 loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();loadLogs();
 loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
 loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();
+loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
 // Pause polling when tab is hidden to save resources
@@ -1166,6 +1351,8 @@ _poll(loadUserGrowth,300000);_poll(loadChannelDetails,120000);
 _poll(loadCoPresence,600000);_poll(loadMilestoneLog,300000);_poll(loadLiveVoice,10000);
 _poll(loadForecast,600000);_poll(loadCohortMatrix,600000);_poll(loadTimeOfDay,300000);
 _poll(loadChurnRisk,600000);_poll(loadRecords,300000);
+_poll(loadGuildHealth,300000);_poll(loadStreakBoard,300000);_poll(loadMarathon,300000);
+_poll(loadEngagementScore,300000);_poll(loadNewUserJourney,600000);_poll(loadPeakSummary,300000);
 // Resume immediately when tab becomes visible again
 document.addEventListener('visibilitychange',()=>{
   if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();loadDAU();loadLiveVoice();}

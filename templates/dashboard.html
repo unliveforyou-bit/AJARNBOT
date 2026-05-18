@@ -651,6 +651,131 @@
       </div>
     </section>
 
+    <!-- ========== NEW v3.3.0 SECTIONS ========== -->
+
+    <section class="card" id="ct-guild-health-section" aria-labelledby="ct-guild-health">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-heartbeat"></i></div>
+        <h2 class="card-title" id="ct-guild-health">Guild Health Score</h2>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadGuildHealth()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="guildHealthWrap">กำลังโหลด...</div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-streak-board-section" aria-labelledby="ct-streak-board">
+      <div class="card-header">
+        <div class="card-icon orange" aria-hidden="true"><i class="ph-bold ph-fire"></i></div>
+        <h2 class="card-title" id="ct-streak-board">Streak Leaderboard — Streak ต่อเนื่อง</h2>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadStreakBoard()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="streakBoardWrap">กำลังโหลด...</div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-marathon-section" aria-labelledby="ct-marathon">
+      <div class="card-header">
+        <div class="card-icon purple" aria-hidden="true"><i class="ph-bold ph-trophy"></i></div>
+        <h2 class="card-title" id="ct-marathon">Marathon Sessions — เซสชั่น 3+ ชั่วโมง</h2>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadMarathon()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="marathonWrap">กำลังโหลด...</div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-engagement-section" aria-labelledby="ct-engagement">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-chart-bar"></i></div>
+        <h2 class="card-title" id="ct-engagement">Engagement Score</h2>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadEngagementScore()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="engagementWrap">กำลังโหลด...</div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-peak-summary-section" aria-labelledby="ct-peak-summary">
+      <div class="card-header">
+        <div class="card-icon yellow" aria-hidden="true"><i class="ph-bold ph-lightning"></i></div>
+        <h2 class="card-title" id="ct-peak-summary">Peak Summary — สรุปช่วงเวลาสูงสุด</h2>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadPeakSummary()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="peakSummaryWrap">กำลังโหลด...</div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-journey-section" aria-labelledby="ct-journey">
+      <div class="card-header">
+        <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-path"></i></div>
+        <h2 class="card-title" id="ct-journey">New User Journey — เส้นทางสมาชิกใหม่</h2>
+        <button class="btn btn-primary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadNewUserJourney()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div id="journeyWrap">กำลังโหลด...</div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-user-compare-section" aria-labelledby="ct-user-compare">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-users-three"></i></div>
+        <h2 class="card-title" id="ct-user-compare">User Compare — เปรียบเทียบสมาชิก</h2>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <input id="compareUidA" type="text" class="filter-input" placeholder="User ID A" style="flex:1;min-width:140px" aria-label="User ID A">
+          <input id="compareUidB" type="text" class="filter-input" placeholder="User ID B" style="flex:1;min-width:140px" aria-label="User ID B">
+          <button class="btn btn-primary" style="height:36px;padding:0 14px" onclick="loadUserCompare()"><i class="ph-bold ph-arrows-left-right" aria-hidden="true"></i> Compare</button>
+        </div>
+        <div id="userCompareWrap"></div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-session-day-section" aria-labelledby="ct-session-day">
+      <div class="card-header">
+        <div class="card-icon orange" aria-hidden="true"><i class="ph-bold ph-calendar-check"></i></div>
+        <h2 class="card-title" id="ct-session-day">Session by Day — เซสชั่นรายวัน</h2>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <input id="sessionDayDate" type="date" class="filter-input" style="flex:1;min-width:160px" aria-label="เลือกวันที่">
+          <button class="btn btn-primary" style="height:36px;padding:0 14px" onclick="loadSessionDay()"><i class="ph-bold ph-magnifying-glass" aria-hidden="true"></i> ดู</button>
+        </div>
+        <div id="sessionDayWrap"></div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-user-heatmap-section" aria-labelledby="ct-user-heatmap">
+      <div class="card-header">
+        <div class="card-icon purple" aria-hidden="true"><i class="ph-bold ph-squares-four"></i></div>
+        <h2 class="card-title" id="ct-user-heatmap">User Heatmap — แผนที่ความร้อนรายบุคคล</h2>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <input id="userHeatmapUid" type="text" class="filter-input" placeholder="User ID" style="flex:1;min-width:160px" aria-label="User ID">
+          <button class="btn btn-primary" style="height:36px;padding:0 14px" onclick="loadUserHeatmap()"><i class="ph-bold ph-magnifying-glass" aria-hidden="true"></i> ดู</button>
+        </div>
+        <div id="userHeatmapWrap"></div>
+      </div>
+    </section>
+
+    <section class="card" id="ct-overlap-timeline-section" aria-labelledby="ct-overlap-timeline">
+      <div class="card-header">
+        <div class="card-icon blue" aria-hidden="true"><i class="ph-bold ph-waveform"></i></div>
+        <h2 class="card-title" id="ct-overlap-timeline">Voice Overlap Timeline — ผู้ใช้ออนไลน์พร้อมกัน</h2>
+      </div>
+      <div class="card-body" style="padding:16px">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <input id="overlapDate" type="date" class="filter-input" style="flex:1;min-width:160px" aria-label="เลือกวันที่">
+          <button class="btn btn-primary" style="height:36px;padding:0 14px" onclick="loadVoiceOverlapTimeline()"><i class="ph-bold ph-magnifying-glass" aria-hidden="true"></i> ดู</button>
+        </div>
+        <div id="overlapTimelineWrap"></div>
+      </div>
+    </section>
+
   </main>
 
   <footer id="appFooter">AjarnBot · Built with discord.py + Flask · <a href="https://github.com/unliveforyou-bit/AJARNBOT" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository เปิดในแท็บใหม่">GitHub</a></footer>

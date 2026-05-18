@@ -275,8 +275,57 @@ Python ถูกสร้างโดยใคร|Guido van Rossum
 
 ## 📋 Changelog
 
-### v3.2.0 — Analytics Suite (20 New Features)
+### v3.3.0 — Advanced Analytics (10 New Features)
 > `HEAD` · 2026-05-18
+
+เพิ่ม **10 features ใหม่** — deep-dive analytics และ user-driven queries สำหรับ Discord Voice stats
+
+**📡 Backend Endpoints**
+
+| Endpoint | คำอธิบาย |
+|----------|----------|
+| `GET /api/guild-health` | Composite health score (DAU trend 35% + retention 35% + churn 20% + growth 10%), label: Excellent/Good/Fair/At Risk (cached 5m) |
+| `GET /api/user-compare` | เปรียบเทียบ 2 คน: hours, sessions, streak, fav channel, last 7d sessions |
+| `GET /api/streak-board` | Streak leaderboard — consecutive active days (cached 5m) |
+| `GET /api/session-day` | ดูทุก session ของวันที่ระบุ (`?date=YYYY-MM-DD`) |
+| `GET /api/marathon` | Session ≥ 3 ชั่วโมง, เรียง duration desc (`?limit`, cached 5m) |
+| `GET /api/engagement-score` | Composite engagement (hours 35% + sessions 30% + streak 20% + days 15%), normalized 0–100 (cached 5m) |
+| `GET /api/user-heatmap` | 7×24 activity matrix สำหรับ user คนเดียว (`?uid`, cached 5m) |
+| `GET /api/new-user-journey` | Cohort ใหม่: first_seen, days_to_second, sessions_30d, retained_week1 (cached 10m) |
+| `GET /api/peak-summary` | KPI snapshot: busiest hour/day, peak DAU date, avg session, unique users (cached 5m) |
+| `GET /api/voice-overlap-timeline` | 96 buckets ×15 min — จำนวน users ที่ online พร้อมกัน (`?date`) |
+
+**🖥️ Frontend Functions**
+
+| Function | คำอธิบาย |
+|----------|----------|
+| `loadGuildHealth()` | SVG gauge arc + sub-score bars (DAU/retention/churn/growth) พร้อม label badge |
+| `loadUserCompare()` | 2-column comparison grid อ่าน `#compareUidA` / `#compareUidB` |
+| `loadStreakBoard()` | Ranked list with streak-fire icon + days |
+| `loadSessionDay()` | Timeline list อ่าน `#sessionDayDate` |
+| `loadMarathon()` | Ranked list — marathon sessions ≥ 3h |
+| `loadEngagementScore()` | Bar rows with gradient score bar per user |
+| `loadUserHeatmap()` | 7×24 CSS heatmap grid อ่าน `#userHeatmapUid`, opacity ∝ activity |
+| `loadNewUserJourney()` | Table: first_seen, days_to_2nd, 30d sessions, week1 retained (✓/✗) |
+| `loadPeakSummary()` | 6-card grid — KPI highlights |
+| `loadVoiceOverlapTimeline()` | SVG 96-bar chart อ่าน `#overlapDate` |
+
+**📊 Dashboard Cards เพิ่ม (10 ใบ)**
+
+Guild Health · Streak Board · Marathon Sessions · Engagement Score · Peak Summary · New User Journey · User Compare · Session by Day · User Heatmap · Voice Overlap Timeline
+
+**⚙️ Polling intervals (ใหม่)**
+
+| Function | Interval |
+|----------|----------|
+| `loadGuildHealth`, `loadStreakBoard`, `loadMarathon`, `loadEngagementScore`, `loadPeakSummary` | 5m |
+| `loadNewUserJourney` | 10m |
+| Input-driven (Compare, SessionDay, UserHeatmap, OverlapTimeline) | Manual trigger only |
+
+---
+
+### v3.2.0 — Analytics Suite (20 New Features)
+> 2026-05-18
 
 เพิ่ม **20 features ใหม่** แบ่งเป็น 2 batches — dashboard analytics ครบวงจรสำหรับ Discord Voice stats
 
