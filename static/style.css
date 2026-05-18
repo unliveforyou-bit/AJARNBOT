@@ -881,6 +881,26 @@ body.light .sort-btn.active { background:rgba(88,101,242,.12); }
 .history-search::placeholder { color:var(--muted); }
 body.light .history-search-wrap { background:var(--surface); }
 
+/* ── Filter input (reusable) ── */
+.filter-input {
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:var(--radius);
+  color:var(--text);
+  padding:8px 12px;
+  font-size:13px;
+  font-family:inherit;
+  min-height:36px;
+  transition:border-color 0.15s, box-shadow 0.15s;
+}
+.filter-input:focus {
+  outline:none;
+  border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-subtle);
+}
+.filter-input::placeholder { color:var(--muted); }
+body.light .filter-input { background:var(--surface); }
+
 /* ── Google Sheets panel ── */
 .sheets-status-wrap { font-size:13px; }
 .sheets-not-configured { color:var(--muted); font-size:13px; line-height:1.6; }
@@ -1097,13 +1117,13 @@ body.light .record-card:hover { background:rgba(88,101,242,.05); }
 .health-sub-row .hsr-label { color:var(--muted); }
 .health-bar-track { height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
 .health-bar-fill  { height:100%; border-radius:3px; background:var(--accent); transition:width .4s ease; }
-.health-sub-row .hsr-val { color:var(--fg); font-weight:600; text-align:right; }
+.health-sub-row .hsr-val { color:var(--text); font-weight:600; text-align:right; }
 
 /* ── Streak Board ───────────────────────────────────────────────────────── */
 .streak-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); }
 .streak-row:last-child { border-bottom:none; }
 .streak-rank { width:24px; font-size:11px; color:var(--muted); font-weight:700; flex-shrink:0; text-align:center; }
-.streak-name { flex:1; font-size:13px; font-weight:500; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.streak-name { flex:1; font-size:13px; font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .streak-fire { font-size:11px; color:var(--orange); font-weight:700; flex-shrink:0; }
 .streak-days { font-size:11px; color:var(--muted); flex-shrink:0; }
 
@@ -1111,7 +1131,7 @@ body.light .record-card:hover { background:rgba(88,101,242,.05); }
 .marathon-row { display:grid; grid-template-columns:28px 1fr auto auto; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); }
 .marathon-row:last-child { border-bottom:none; }
 .marathon-rank { font-size:11px; color:var(--muted); font-weight:700; text-align:center; }
-.marathon-name { font-size:13px; font-weight:500; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.marathon-name { font-size:13px; font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .marathon-dur  { font-size:12px; color:var(--purple); font-weight:600; flex-shrink:0; }
 .marathon-date { font-size:11px; color:var(--muted); flex-shrink:0; }
 
@@ -1119,45 +1139,45 @@ body.light .record-card:hover { background:rgba(88,101,242,.05); }
 .engage-row { display:grid; grid-template-columns:28px 1fr 120px 44px; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); }
 .engage-row:last-child { border-bottom:none; }
 .engage-rank { font-size:11px; color:var(--muted); font-weight:700; text-align:center; }
-.engage-name { font-size:13px; font-weight:500; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.engage-name { font-size:13px; font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .engage-bar-track { height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
 .engage-bar-fill  { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--accent),var(--green)); transition:width .4s ease; }
-.engage-score { font-size:12px; color:var(--fg); font-weight:700; text-align:right; }
+.engage-score { font-size:12px; color:var(--text); font-weight:700; text-align:right; }
 
 /* ── Peak Summary ───────────────────────────────────────────────────────── */
 .peak-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:12px; }
-.peak-card { background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; }
+.peak-card { background:var(--overlay); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; }
 .peak-card-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px; }
-.peak-card-value { font-size:18px; font-weight:700; color:var(--fg); line-height:1.2; }
+.peak-card-value { font-size:18px; font-weight:700; color:var(--text); line-height:1.2; }
 .peak-card-sub   { font-size:11px; color:var(--muted); margin-top:2px; }
 body.light .peak-card { background:var(--surface); }
+body.light .compare-col { background:var(--surface); }
 
 /* ── New User Journey ───────────────────────────────────────────────────── */
 .journey-row { display:grid; grid-template-columns:1fr 88px 80px 60px 40px; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .journey-row:last-child { border-bottom:none; }
 .journey-header { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; padding-bottom:4px; border-bottom:1px solid var(--border); margin-bottom:4px; }
-.journey-name  { font-weight:500; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.journey-val   { color:var(--fg); text-align:center; }
+.journey-name  { font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.journey-val   { color:var(--text); text-align:center; }
 .journey-retained.yes { color:var(--green); font-weight:700; }
 .journey-retained.no  { color:var(--muted); }
 
 /* ── User Compare ───────────────────────────────────────────────────────── */
 .compare-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.compare-col  { background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
-.compare-col-name { font-size:14px; font-weight:700; color:var(--fg); margin-bottom:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.compare-col  { background:var(--overlay); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+.compare-col-name { font-size:14px; font-weight:700; color:var(--text); margin-bottom:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .compare-stat { display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .compare-stat:last-child { border-bottom:none; }
 .compare-stat-label { color:var(--muted); }
-.compare-stat-val   { font-weight:600; color:var(--fg); }
-body.light .compare-col { background:var(--surface); }
+.compare-stat-val   { font-weight:600; color:var(--text); }
 
 /* ── Session by Day ─────────────────────────────────────────────────────── */
 .session-day-row { display:grid; grid-template-columns:54px 1fr 1fr auto; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .session-day-row:last-child { border-bottom:none; }
 .session-day-time { font-family:monospace; color:var(--accent); font-size:11px; }
-.session-day-name { font-weight:500; color:var(--fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.session-day-name { font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .session-day-ch   { color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.session-day-dur  { color:var(--fg); font-weight:600; flex-shrink:0; }
+.session-day-dur  { color:var(--text); font-weight:600; flex-shrink:0; }
 
 /* ── User Heatmap ───────────────────────────────────────────────────────── */
 .uheat-wrap { overflow-x:auto; }
@@ -1165,7 +1185,7 @@ body.light .compare-col { background:var(--surface); }
 .uheat-row { display:flex; align-items:center; gap:2px; }
 .uheat-day-label { font-size:10px; color:var(--muted); width:24px; flex-shrink:0; text-align:right; }
 .uheat-cell { width:18px; height:18px; border-radius:3px; background:var(--border); flex-shrink:0; position:relative; cursor:default; }
-.uheat-cell:hover::after { content:attr(data-tip); position:absolute; bottom:calc(100%+4px); left:50%; transform:translateX(-50%); background:var(--surface-alt); border:1px solid var(--border); border-radius:4px; padding:2px 6px; font-size:10px; white-space:nowrap; z-index:10; pointer-events:none; color:var(--fg); }
+.uheat-cell:hover::after { content:attr(data-tip); position:absolute; bottom:calc(100%+4px); left:50%; transform:translateX(-50%); background:var(--overlay); border:1px solid var(--border); border-radius:4px; padding:2px 6px; font-size:10px; white-space:nowrap; z-index:10; pointer-events:none; color:var(--text); }
 .uheat-hour-labels { display:flex; gap:2px; padding-left:26px; margin-bottom:2px; }
 .uheat-hour-label  { width:18px; font-size:9px; color:var(--muted); text-align:center; flex-shrink:0; }
 
