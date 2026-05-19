@@ -1144,7 +1144,7 @@ async function loadGuildHealth(){
   wrap.innerHTML=`
   <div class="health-layout">
     <div class="health-gauge-wrap">
-      <svg viewBox="0 0 120 80" width="180" height="auto" aria-hidden="true" style="display:block;overflow:visible">
+      <svg viewBox="0 0 120 80" aria-hidden="true" style="display:block;width:180px;height:auto;overflow:visible">
         <path d="M10,70 A55,55 0 0,1 110,70" fill="none" stroke="var(--border)" stroke-width="12" stroke-linecap="round"/>
         <path d="M10,70 A55,55 0 0,1 110,70" fill="none" stroke="var(--accent)" stroke-width="12" stroke-linecap="round"
           stroke-dasharray="${((pct/100)*arcLen).toFixed(1)} ${arcLen}" style="transition:stroke-dasharray 0.8s ease"/>
