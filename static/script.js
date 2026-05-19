@@ -46,6 +46,20 @@ function showToast(msg,err=false){
 }
 let _loadGeneration=0;
 function escHTML(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+
+// ── Avatar + profile-link helpers ────────────────────────────────────────────
+/** Returns <img> or initial-circle for a user */
+function _avImg(uid,name){
+  const url=_avatarMap[uid];
+  const init=escHTML((name||'?')[0].toUpperCase());
+  return url
+    ?`<img src="${escHTML(url)}?size=64" class="row-avatar" alt="" loading="lazy" decoding="async">`
+    :`<div class="row-avatar row-avatar-init" aria-hidden="true">${init}</div>`;
+}
+/** Returns name wrapped in a profile link */
+function _profileLink(uid,name){
+  return`<a href="/profile/${encodeURIComponent(uid)}" target="_blank" class="row-name-link">${escHTML(name)}</a>`;
+}
 function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
 const _debouncedFilterHistory=debounce(v=>filterHistory(v),150);
 const _debouncedFilterMembers=debounce(v=>filterMembers(v),150);
@@ -677,7 +691,8 @@ async function loadLeaderboard(period,btn){
 
   el.innerHTML=!d||!d.length?'<span class="empty-msg">ยังไม่มีข้อมูล</span>'
     :d.map((s,i)=>'<div class="stat-row"><span class="stat-rank">'+rankLabel(i)+'</span>'
-      +'<span class="stat-name"><a href="/profile/'+escHTML(s.uid)+'" target="_blank">'+escHTML(s.name)+'</a></span>'
+      +_avImg(s.uid,s.name)
+      +'<span class="stat-name"><a href="/profile/'+escHTML(s.uid)+'" target="_blank" class="row-name-link">'+escHTML(s.name)+'</a></span>'
       +'<span class="stat-time">'+escHTML(s.duration)+'</span></div>').join('');
 }
 
@@ -691,7 +706,8 @@ async function loadInactive(){
     const days=u.days_inactive;
     const cls=days>=60?'gone':days>=30?'danger':'warn';
     return'<div class="inactive-row">'
-      +'<span class="inactive-name">'+escHTML(u.name)+'</span>'
+      +_avImg(u.uid,u.name)
+      +'<span class="inactive-name">'+_profileLink(u.uid,u.name)+'</span>'
       +'<span class="inactive-date">'+escHTML(u.last_seen)+'</span>'
       +'<span class="inactive-badge '+cls+'">'+days+' วัน</span>'
       +'</div>';
@@ -844,12 +860,16 @@ async function notionSetup(btn){
 
 // ── Member browser ────────────────────────────────────────────────────────────
 let _membersCache=[];
+let _avatarMap={};  // uid -> avatar_url (populated from /api/members)
 async function loadMembers(){
   if(!currentGuildId)return;
   const wrap=document.getElementById('membersList');if(!wrap)return;
   let d;try{const r=await fetch('/api/members?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}
   catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
   _membersCache=d||[];
+  // Build uid->avatar_url map for use in all list renders
+  _avatarMap={};
+  _membersCache.forEach(m=>{if(m.avatar_url)_avatarMap[m.uid]=m.avatar_url;});
   filterMembers(document.getElementById('membersSearch')?.value||'');
 }
 function filterMembers(q){
@@ -1106,7 +1126,8 @@ async function loadChurnRisk(){
       const col=COLORS[u.risk_level]||'var(--muted)';
       return'<div class="churn-row">'
         +`<i class="ph-bold ${ICONS[u.risk_level]||'ph-info'}" style="color:${col};flex-shrink:0"></i>`
-        +`<span class="churn-name">${escHTML(u.name)}</span>`
+        +_avImg(u.uid,u.name)
+        +`<span class="churn-name">${_profileLink(u.uid,u.name)}</span>`
         +`<span class="churn-meta" style="color:var(--muted)">${u.days_since_last}d ไม่มา</span>`
         +'<div class="churn-bar-bg"><div class="churn-bar-fill" style="width:'+pct+'%;background:'+col+'"></div></div>'
         +`<span class="churn-badge" style="color:${col}">${u.risk_level}</span>`
@@ -1193,7 +1214,8 @@ async function loadStreakBoard(){
   wrap.innerHTML='<div class="streak-list">'
     +rows.map((u,i)=>`<div class="streak-row">
       <span class="streak-rank">${i+1}</span>
-      <span class="streak-name">${escHTML(u.name)}</span>
+      ${_avImg(u.uid,u.name)}
+      <span class="streak-name">${_profileLink(u.uid,u.name)}</span>
       <span class="streak-fire">${u.current_streak}d</span>
       <span class="streak-days">${escHTML(u.duration)}</span>
     </div>`).join('')+'</div>';
@@ -1225,7 +1247,8 @@ async function loadMarathon(){
   wrap.innerHTML='<div class="marathon-list">'
     +rows.map((s,i)=>`<div class="marathon-row">
       <span class="marathon-rank">${i+1}</span>
-      <span class="marathon-name">${escHTML(s.name)}</span>
+      ${_avImg(s.uid,s.name)}
+      <span class="marathon-name">${_profileLink(s.uid,s.name)}</span>
       <span class="marathon-ch">${escHTML(s.channel)}</span>
       <span class="marathon-dur">${escHTML(s.duration)}</span>
       <span class="marathon-date">${escHTML(s.date?.slice(0,10)||'-')}</span>
@@ -1242,7 +1265,8 @@ async function loadEngagementScore(){
   wrap.innerHTML='<div class="engage-list">'
     +rows.map((u,i)=>`<div class="engage-row">
       <span class="engage-rank">${i+1}</span>
-      <span class="engage-name">${escHTML(u.name)}</span>
+      ${_avImg(u.uid,u.name)}
+      <span class="engage-name">${_profileLink(u.uid,u.name)}</span>
       <div class="engage-bar-track"><div class="engage-bar-fill" style="width:${(u.score/max*100).toFixed(1)}%"></div></div>
       <span class="engage-score">${u.score}</span>
     </div>`).join('')+'</div>';
