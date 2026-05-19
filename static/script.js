@@ -1,3 +1,6 @@
+// Mark JS as available (enables CSS entrance animations)
+document.documentElement.classList.add('js');
+
 // ── CSRF-aware POST helper ─────────────────────────────────────────────────────
 let _csrfToken = '';
 async function _getCSRF() {
@@ -296,7 +299,9 @@ async function refreshStatus(){
     const ec=d.event_counts||{};
     const ecMap={evJoin:'join',evLeave:'leave',evMute:'mute',evDeaf:'deaf',evStream:'stream',evVideo:'video'};
     Object.entries(ecMap).forEach(([id,key])=>{
-      const el=document.getElementById(id);if(el)el.textContent=ec[key]!=null?Number(ec[key]).toLocaleString():'—';
+      const el=document.getElementById(id);if(!el)return;
+      const newVal=ec[key]!=null?Number(ec[key]).toLocaleString():'—';
+      if(el.textContent!==newVal){el.textContent=newVal;flashStat(id);}
     });
     const vl=document.getElementById('voiceList');
     if(d.voice_users.length===0){
@@ -1377,3 +1382,39 @@ _poll(loadEngagementScore,300000);_poll(loadNewUserJourney,600000);_poll(loadPea
 document.addEventListener('visibilitychange',()=>{
   if(!document.hidden){refreshStatus();loadHeatmap();loadHistory();loadChannelActivity();loadDAU();loadLiveVoice();}
 });
+
+// ── Page Animations ───────────────────────────────────────────────────────────
+(function initCardAnims(){
+  // Respect user preference
+  if(window.matchMedia('(prefers-reduced-motion:reduce)').matches){
+    document.querySelectorAll('.card').forEach(c=>c.classList.add('entered'));
+    return;
+  }
+  if(!('IntersectionObserver' in window)){
+    document.querySelectorAll('.card').forEach(c=>c.classList.add('entered'));
+    return;
+  }
+  const io=new IntersectionObserver(entries=>{
+    entries.forEach(e=>{
+      if(!e.isIntersecting)return;
+      const card=e.target;
+      // Trigger entrance transition
+      card.classList.add('is-visible');
+      // After entrance (500ms), switch to fast hover transition
+      setTimeout(()=>{
+        card.classList.remove('is-visible');
+        card.classList.add('entered');
+      },560);
+      io.unobserve(card);
+    });
+  },{threshold:0.05,rootMargin:'0px 0px -24px 0px'});
+  document.querySelectorAll('.card').forEach(c=>io.observe(c));
+})();
+
+// Flash a stat value element when data updates
+function flashStat(id){
+  const el=document.getElementById(id);if(!el)return;
+  el.classList.remove('val-flash');
+  void el.offsetWidth; // force reflow to restart animation
+  el.classList.add('val-flash');
+}

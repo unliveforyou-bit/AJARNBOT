@@ -1202,3 +1202,136 @@ body.light .compare-col { background:var(--surface); }
 #overlapTimelineWrap svg text { font-family:inherit; }
 .overlap-legend { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); margin-top:8px; }
 .overlap-legend-dot { width:10px; height:10px; border-radius:2px; background:var(--accent); flex-shrink:0; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATIONS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Card hover lift ── */
+.card { transition:box-shadow 0.22s ease, transform 0.22s ease; }
+.card:hover {
+  box-shadow:0 8px 28px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.08);
+  transform:translateY(-2px);
+}
+body.light .card:hover {
+  box-shadow:0 6px 20px rgba(0,0,0,.09), 0 2px 6px rgba(0,0,0,.04);
+}
+
+/* ── Card-icon micro-bounce on card hover ── */
+.card-icon { transition:transform 0.22s cubic-bezier(.22,1,.36,1), background 0.22s ease; }
+.card:hover .card-icon { transform:scale(1.2) rotate(-5deg); }
+
+/* ── Card entrance (JS adds html.js, then .is-visible / .entered) ──
+   Cards start hidden; JS observer triggers entrance then switches to fast transition */
+html.js .card {
+  opacity:0;
+  transform:translateY(18px);
+  transition:opacity 0.5s cubic-bezier(.22,1,.36,1),
+             transform 0.5s cubic-bezier(.22,1,.36,1),
+             box-shadow 0.22s ease;
+}
+html.js .card.is-visible {
+  opacity:1;
+  transform:translateY(0);
+}
+/* After entrance completes, use fast transition so hover is snappy */
+html.js .card.entered {
+  opacity:1;
+  transform:translateY(0);
+  transition:box-shadow 0.22s ease, transform 0.22s ease;
+}
+html.js .card.entered:hover { transform:translateY(-2px); }
+
+/* ── Sidebar nav hover slide ── */
+.sidebar-nav li a {
+  transition:color 0.15s ease, background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.sidebar-nav li a:hover { transform:translateX(3px); }
+.sidebar-nav li a.active { transform:translateX(3px); }
+
+/* ── Leaderboard / list rows slide in on render ── */
+@keyframes rowSlideIn {
+  from { opacity:0; transform:translateX(-10px); }
+  to   { opacity:1; transform:translateX(0); }
+}
+.stat-row         { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+.inactive-row     { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+.streak-row       { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+.engage-row       { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+.marathon-row     { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+.journey-row:not(.journey-header) { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+.churn-row        { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+.session-day-row  { animation:rowSlideIn 0.3s cubic-bezier(.22,1,.36,1) both; }
+
+/* Stagger delays for rows */
+.stat-row:nth-child(1),.inactive-row:nth-child(1),.streak-row:nth-child(1),
+.engage-row:nth-child(1),.marathon-row:nth-child(1) { animation-delay:.02s; }
+.stat-row:nth-child(2),.inactive-row:nth-child(2),.streak-row:nth-child(2),
+.engage-row:nth-child(2),.marathon-row:nth-child(2) { animation-delay:.05s; }
+.stat-row:nth-child(3),.inactive-row:nth-child(3),.streak-row:nth-child(3),
+.engage-row:nth-child(3),.marathon-row:nth-child(3) { animation-delay:.08s; }
+.stat-row:nth-child(4),.inactive-row:nth-child(4),.streak-row:nth-child(4),
+.engage-row:nth-child(4),.marathon-row:nth-child(4) { animation-delay:.11s; }
+.stat-row:nth-child(5),.inactive-row:nth-child(5),.streak-row:nth-child(5),
+.engage-row:nth-child(5),.marathon-row:nth-child(5) { animation-delay:.14s; }
+.stat-row:nth-child(6),.inactive-row:nth-child(6),.streak-row:nth-child(6),
+.engage-row:nth-child(6),.marathon-row:nth-child(6) { animation-delay:.17s; }
+.stat-row:nth-child(7),.inactive-row:nth-child(7),.streak-row:nth-child(7),
+.engage-row:nth-child(7),.marathon-row:nth-child(7) { animation-delay:.20s; }
+.stat-row:nth-child(8),.inactive-row:nth-child(8),.streak-row:nth-child(8),
+.engage-row:nth-child(8),.marathon-row:nth-child(8) { animation-delay:.23s; }
+.stat-row:nth-child(9),.inactive-row:nth-child(9),.streak-row:nth-child(9),
+.engage-row:nth-child(9),.marathon-row:nth-child(9) { animation-delay:.26s; }
+.stat-row:nth-child(10),.inactive-row:nth-child(10),.streak-row:nth-child(10),
+.engage-row:nth-child(10),.marathon-row:nth-child(10) { animation-delay:.29s; }
+
+/* ── Stat value flash on update ── */
+@keyframes valFlash {
+  0%   { color:var(--accent); transform:scale(1.08); }
+  100% { color:inherit;       transform:scale(1);    }
+}
+.stat-value.val-flash { animation:valFlash 0.45s cubic-bezier(.22,1,.36,1) both; }
+
+/* ── Live voice count pulse ── */
+@keyframes livePulse {
+  0%,100% { opacity:1; }
+  50%      { opacity:0.55; }
+}
+#kpiOnlineNow { animation:livePulse 2.8s ease-in-out infinite; }
+
+/* ── Button press feedback ── */
+.btn:active:not(:disabled) { transform:scale(0.96); transition:transform 0.08s ease; }
+
+/* ── Peak summary cards pop in ── */
+@keyframes peakCardIn {
+  from { opacity:0; transform:scale(0.9) translateY(8px); }
+  to   { opacity:1; transform:scale(1) translateY(0); }
+}
+.peak-card { animation:peakCardIn 0.4s cubic-bezier(.22,1,.36,1) both; }
+.peak-card:nth-child(1) { animation-delay:.03s; }
+.peak-card:nth-child(2) { animation-delay:.08s; }
+.peak-card:nth-child(3) { animation-delay:.13s; }
+.peak-card:nth-child(4) { animation-delay:.18s; }
+
+/* ── Compare col slide in ── */
+@keyframes compareIn {
+  from { opacity:0; transform:translateY(12px); }
+  to   { opacity:1; transform:translateY(0); }
+}
+.compare-col:nth-child(1) { animation:compareIn 0.4s cubic-bezier(.22,1,.36,1) both .04s; }
+.compare-col:nth-child(2) { animation:compareIn 0.4s cubic-bezier(.22,1,.36,1) both .10s; }
+
+/* ── Reduced motion safety net ── */
+@media (prefers-reduced-motion:reduce) {
+  .card, html.js .card, html.js .card.is-visible, html.js .card.entered,
+  .card-icon, .sidebar-nav li a,
+  .stat-row, .inactive-row, .streak-row, .engage-row, .marathon-row,
+  .journey-row, .churn-row, .session-day-row,
+  .stat-value.val-flash, .peak-card, .compare-col,
+  #kpiOnlineNow, .btn:active {
+    animation:none !important;
+    transition:none !important;
+    opacity:1 !important;
+    transform:none !important;
+  }
+}
