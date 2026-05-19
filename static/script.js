@@ -3,21 +3,35 @@ document.documentElement.classList.add('js');
 
 // ── CSRF-aware POST helper ─────────────────────────────────────────────────────
 let _csrfToken = '';
+let _csrfExpiry = 0;         // epoch ms — refresh before 55-min mark (server TTL = 1h)
+const _CSRF_TTL_MS = 55 * 60 * 1000;
+
 async function _getCSRF() {
-  if (_csrfToken) return _csrfToken;
+  if (_csrfToken && Date.now() < _csrfExpiry) return _csrfToken;
   try {
     const r = await fetch('/api/csrf-token');
-    if (r.ok) { const d = await r.json(); _csrfToken = d.token || ''; }
-  } catch (_) { /* non-critical — CSRF validation will fail gracefully */ }
+    if (r.ok) {
+      const d = await r.json();
+      _csrfToken  = d.token || '';
+      _csrfExpiry = Date.now() + _CSRF_TTL_MS;
+    } else {
+      // 401/403 = session expired — redirect to login
+      if (r.status === 401 || r.status === 403) { window.location.href = '/login'; }
+      _csrfToken = '';
+    }
+  } catch (_) { /* network error — token stays empty, POST will get 403 */ }
   return _csrfToken;
 }
 async function _post(url, body = {}) {
   const tok = await _getCSRF();
-  return fetch(url, {
+  const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': tok },
     body: JSON.stringify(body),
   });
+  // If server rejects token (403), clear cache so next call re-fetches
+  if (res.status === 403) { _csrfToken = ''; _csrfExpiry = 0; }
+  return res;
 }
 // ──────────────────────────────────────────────────────────────────────────────
 const TOGGLES=[

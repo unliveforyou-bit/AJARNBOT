@@ -1861,7 +1861,7 @@ flask_app.secret_key = _FLASK_SECRET_RAW
 flask_app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 flask_app.config['SESSION_COOKIE_SECURE'] = True
 flask_app.config['SESSION_COOKIE_HTTPONLY'] = True
-flask_app.config['WTF_CSRF_TIME_LIMIT'] = None   # no expiry on CSRF token (session-tied)
+flask_app.config['WTF_CSRF_TIME_LIMIT'] = 3600   # CSRF token expires after 1h
 flask_app.config['WTF_CSRF_CHECK_DEFAULT'] = False  # validate manually per route
 flask_app.config['WTF_CSRF_HEADERS'] = ['X-CSRFToken']   # accept CSRF token from AJAX header
 flask_app.permanent_session_lifetime = timedelta(hours=24)  # sessions expire after 24h
@@ -2266,17 +2266,23 @@ def api_status():
     combined = get_stats_for_period('week', guild_id=guild_id)
     stats_sorted   = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
     weekly_display = [{'uid': k, 'name': v['name'], 'time': format_duration(v['seconds'])} for k, v in stats_sorted[:10]]
-    # Avg / median session duration (all-time for this guild)
-    with _lock_history:
-        guild_secs = [s['seconds'] for s in session_history if s.get('guild_id') == guild_id and s.get('seconds', 0) > 0]
-    total_sessions = len(guild_secs)
-    if guild_secs:
-        avg_secs    = int(sum(guild_secs) / total_sessions)
-        sorted_secs = sorted(guild_secs)
-        mid = total_sessions // 2
-        median_secs = sorted_secs[mid] if total_sessions % 2 else (sorted_secs[mid - 1] + sorted_secs[mid]) // 2
+    # Avg / median session duration — cached 60s to avoid O(n) scan on every poll
+    _sc = _status_sess_cache.get(guild_id)
+    if _sc and time.monotonic() < _sc[3]:
+        total_sessions, avg_secs, median_secs = _sc[0], _sc[1], _sc[2]
     else:
-        avg_secs = median_secs = 0
+        with _lock_history:
+            guild_secs = [s['seconds'] for s in session_history
+                          if s.get('guild_id') == guild_id and s.get('seconds', 0) > 0]
+        total_sessions = len(guild_secs)
+        if guild_secs:
+            avg_secs    = int(sum(guild_secs) / total_sessions)
+            sorted_secs = sorted(guild_secs)
+            mid = total_sessions // 2
+            median_secs = sorted_secs[mid] if total_sessions % 2 else (sorted_secs[mid - 1] + sorted_secs[mid]) // 2
+        else:
+            avg_secs = median_secs = 0
+        _status_sess_cache[guild_id] = (total_sessions, avg_secs, median_secs, time.monotonic() + _STATUS_SESS_TTL)
     # event_counts is global — expose only guild-relevant subset
     ec = event_counts
     return jsonify({
@@ -3443,10 +3449,12 @@ def api_dau():
     return jsonify(result)
 
 # ── Simple TTL cache for expensive endpoints ──────────────────────────────────
-_ldb_cache: dict  = {}   # {(gid, period, sort): (result_list, expires_at)}
-_ret_cache: dict  = {}   # {(gid, num_weeks): (result_list, expires_at)}
-_LDB_TTL = 60            # seconds
-_RET_TTL = 300           # 5 minutes
+_ldb_cache: dict    = {}   # {(gid, period, sort): (result_list, expires_at)}
+_ret_cache: dict    = {}   # {(gid, num_weeks): (result_list, expires_at)}
+_status_sess_cache: dict = {}  # {gid: (total, avg_secs, median_secs, expires_at)}
+_LDB_TTL        = 60           # seconds
+_RET_TTL        = 300          # 5 minutes
+_STATUS_SESS_TTL = 60          # seconds — session stats updated at most once/min
 
 # ── Leaderboard with period ───────────────────────────────────────────────────
 @flask_app.route('/api/leaderboard')
