@@ -1104,37 +1104,44 @@ body.light .record-card:hover { background:rgba(88,101,242,.05); }
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Guild Health ───────────────────────────────────────────────────────── */
-.health-gauge-wrap { display:flex; flex-direction:column; align-items:center; gap:12px; }
+.health-layout { display:flex; align-items:center; gap:24px; flex-wrap:wrap; }
+.health-gauge-wrap { flex-shrink:0; display:flex; flex-direction:column; align-items:center; }
 .health-gauge-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+.gauge-num   { font-size:22px; font-weight:700; fill:var(--text); font-family:'Geist',sans-serif; }
+.gauge-label { font-size:9px; fill:var(--muted); font-family:'Geist',sans-serif; text-transform:uppercase; letter-spacing:.04em; }
 .health-badge { display:inline-flex; align-items:center; gap:6px; padding:4px 12px; border-radius:20px; font-size:12px; font-weight:600; }
 .health-badge.excellent { background:var(--green-subtle); color:var(--green); border:1px solid var(--green-border); }
-.health-badge.good      { background:var(--accent-subtle); color:var(--accent); border:1px solid rgba(88,101,242,.30); }
+.health-badge.good      { background:var(--accent-subtle); color:var(--accent); border:1px solid var(--accent-border); }
 .health-badge.fair      { background:var(--yellow-subtle); color:var(--yellow); border:1px solid var(--yellow-border); }
 .health-badge.at-risk   { background:var(--red-subtle); color:var(--red); border:1px solid var(--red-border); }
-.health-sub-rows { width:100%; display:flex; flex-direction:column; gap:8px; }
-.health-sub-row { display:grid; grid-template-columns:120px 1fr 36px; align-items:center; gap:8px; font-size:12px; }
+.health-sub-rows { flex:1; min-width:180px; display:flex; flex-direction:column; gap:8px; }
+.health-sub-row { display:grid; grid-template-columns:100px 1fr 36px; align-items:center; gap:8px; font-size:12px; }
 .health-sub-row .hsr-label { color:var(--muted); }
 .health-bar-track { height:6px; background:var(--border); border-radius:3px; overflow:hidden; }
 .health-bar-fill  { height:100%; border-radius:3px; background:var(--accent); transition:width .4s ease; }
 .health-sub-row .hsr-val { color:var(--text); font-weight:600; text-align:right; }
 
 /* ── Streak Board ───────────────────────────────────────────────────────── */
-.streak-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); }
+.streak-list  { display:flex; flex-direction:column; }
+.streak-row   { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--border); }
 .streak-row:last-child { border-bottom:none; }
-.streak-rank { width:24px; font-size:11px; color:var(--muted); font-weight:700; flex-shrink:0; text-align:center; }
-.streak-name { flex:1; font-size:13px; font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.streak-fire { font-size:11px; color:var(--orange); font-weight:700; flex-shrink:0; }
-.streak-days { font-size:11px; color:var(--muted); flex-shrink:0; }
+.streak-rank  { width:24px; font-size:11px; color:var(--muted); font-weight:700; flex-shrink:0; text-align:center; }
+.streak-name  { flex:1; font-size:13px; font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.streak-fire  { font-size:12px; color:var(--orange); font-weight:700; flex-shrink:0; min-width:32px; text-align:right; }
+.streak-days  { font-size:11px; color:var(--muted); flex-shrink:0; min-width:80px; text-align:right; }
 
 /* ── Marathon Sessions ──────────────────────────────────────────────────── */
-.marathon-row { display:grid; grid-template-columns:28px 1fr auto auto; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); }
+.marathon-list { display:flex; flex-direction:column; }
+.marathon-row  { display:grid; grid-template-columns:28px 1fr minmax(0,140px) auto auto; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); }
 .marathon-row:last-child { border-bottom:none; }
 .marathon-rank { font-size:11px; color:var(--muted); font-weight:700; text-align:center; }
 .marathon-name { font-size:13px; font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.marathon-ch   { font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .marathon-dur  { font-size:12px; color:var(--purple); font-weight:600; flex-shrink:0; }
 .marathon-date { font-size:11px; color:var(--muted); flex-shrink:0; }
 
 /* ── Engagement Score ───────────────────────────────────────────────────── */
+.engage-list { display:flex; flex-direction:column; }
 .engage-row { display:grid; grid-template-columns:28px 1fr 120px 44px; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); }
 .engage-row:last-child { border-bottom:none; }
 .engage-rank { font-size:11px; color:var(--muted); font-weight:700; text-align:center; }
@@ -1153,13 +1160,15 @@ body.light .peak-card { background:var(--surface); }
 body.light .compare-col { background:var(--surface); }
 
 /* ── New User Journey ───────────────────────────────────────────────────── */
-.journey-row { display:grid; grid-template-columns:1fr 88px 80px 60px 40px; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.journey-list { display:flex; flex-direction:column; }
+.journey-row { display:grid; grid-template-columns:1fr 88px 56px 60px 32px; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--border); font-size:12px; }
 .journey-row:last-child { border-bottom:none; }
-.journey-header { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; padding-bottom:4px; border-bottom:1px solid var(--border); margin-bottom:4px; }
+.journey-row.journey-header { border-bottom:2px solid var(--border-strong); padding-bottom:6px; margin-bottom:2px; }
+.journey-row.journey-header span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.05em; font-weight:600; }
 .journey-name  { font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.journey-val   { color:var(--text); text-align:center; }
-.journey-retained.yes { color:var(--green); font-weight:700; }
-.journey-retained.no  { color:var(--muted); }
+.journey-val   { color:var(--text-secondary); text-align:center; }
+.journey-retained.yes { color:var(--green); font-weight:700; text-align:center; }
+.journey-retained.no  { color:var(--muted); text-align:center; }
 
 /* ── User Compare ───────────────────────────────────────────────────────── */
 .compare-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
@@ -1172,6 +1181,7 @@ body.light .compare-col { background:var(--surface); }
 
 /* ── Session by Day ─────────────────────────────────────────────────────── */
 .session-day-row { display:grid; grid-template-columns:54px 1fr 1fr auto; align-items:center; gap:8px; padding:7px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.session-day-list { display:flex; flex-direction:column; }
 .session-day-row:last-child { border-bottom:none; }
 .session-day-time { font-family:monospace; color:var(--accent); font-size:11px; }
 .session-day-name { font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

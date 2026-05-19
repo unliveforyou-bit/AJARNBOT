@@ -699,17 +699,21 @@ async function loadRetention(){
   const wrap=document.getElementById('retentionWrap');if(!wrap)return;
   let d;try{const r=await fetch('/api/retention?guild_id='+currentGuildId+'&weeks=8');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   if(!d||!d.length||d.every(w=>w.active_count===0)){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
+  const scales=d.map((w,i)=>i>0&&w.retention_pct!==null?(Math.max(w.retention_pct,0)/100).toFixed(3):'0.04');
   wrap.innerHTML=d.map((w,i)=>{
     const pct=w.retention_pct!==null?w.retention_pct:null;
-    const scale=i>0&&pct!==null?(Math.max(pct,0)/100).toFixed(3):'0.04';
     const lbl=w.week_start.slice(5);// MM-DD
     const title=lbl+'\nActive: '+w.active_count+(pct!==null?'\nRetention: '+pct+'%':'');
     return'<div class="retention-col" title="'+escHTML(title)+'">'
       +(i>0?'<div class="retention-pct">'+(pct!==null?pct+'%':'—')+'</div>':'<div class="retention-pct">—</div>')
-      +'<div class="retention-bar-bg"><div class="retention-bar-fill" style="transform:scaleY('+scale+')"></div></div>'
+      +'<div class="retention-bar-bg"><div class="retention-bar-fill"></div></div>'
       +'<div class="retention-week">'+escHTML(lbl)+'</div>'
       +'</div>';
   }).join('');
+  // trigger CSS transition after paint
+  requestAnimationFrame(()=>{
+    wrap.querySelectorAll('.retention-bar-fill').forEach((el,i)=>{el.style.transform='scaleY('+scales[i]+')';});
+  });
 }
 
 // ── 7×24 Day-of-Week Heatmap ──────────────────────────────────────────────────
@@ -1135,20 +1139,24 @@ async function loadGuildHealth(){
   const wrap=document.getElementById('guildHealthWrap');if(!wrap)return;
   let d;try{const r=await fetch('/api/guild-health?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   const pct=Math.round(Number(d.health_score)||0);
+  const arc=Math.PI; // semicircle arc length ≈ 173px at r=55
+  const arcLen=173;
   wrap.innerHTML=`
-  <div class="health-score-wrap">
-    <div class="health-gauge"><svg viewBox="0 0 120 70" aria-hidden="true">
-      <path d="M10,60 A50,50 0 0,1 110,60" fill="none" stroke="var(--border)" stroke-width="10" stroke-linecap="round"/>
-      <path d="M10,60 A50,50 0 0,1 110,60" fill="none" stroke="var(--accent)" stroke-width="10" stroke-linecap="round"
-        stroke-dasharray="${(pct/100)*157} 157" style="transition:stroke-dasharray 0.8s ease"/>
-      <text x="60" y="58" text-anchor="middle" class="gauge-num">${pct}</text>
-      <text x="60" y="70" text-anchor="middle" class="gauge-label">${escHTML(d.label)}</text>
-    </svg></div>
-    <div class="health-bars">
+  <div class="health-layout">
+    <div class="health-gauge-wrap">
+      <svg viewBox="0 0 120 80" width="180" height="auto" aria-hidden="true" style="display:block;overflow:visible">
+        <path d="M10,70 A55,55 0 0,1 110,70" fill="none" stroke="var(--border)" stroke-width="12" stroke-linecap="round"/>
+        <path d="M10,70 A55,55 0 0,1 110,70" fill="none" stroke="var(--accent)" stroke-width="12" stroke-linecap="round"
+          stroke-dasharray="${((pct/100)*arcLen).toFixed(1)} ${arcLen}" style="transition:stroke-dasharray 0.8s ease"/>
+        <text x="60" y="64" text-anchor="middle" class="gauge-num">${pct}</text>
+        <text x="60" y="76" text-anchor="middle" class="gauge-label">${escHTML(d.label||'')}</text>
+      </svg>
+    </div>
+    <div class="health-sub-rows">
       ${[['DAU Trend',((d.dau_trend??0)+1)/2],['Retention',d.retention_score??0],['Stability',1-(d.churn_score??0)],['Growth',d.growth_score??0]].map(([lbl,v])=>{const pv=Math.round(Math.max(0,Math.min(1,v))*100);return`
-      <div class="hbar-row"><span class="hbar-lbl">${lbl}</span>
-        <div class="hbar-track"><div class="hbar-fill" style="width:${pv}%"></div></div>
-        <span class="hbar-val">${pv}%</span>
+      <div class="health-sub-row"><span class="hsr-label">${lbl}</span>
+        <div class="health-bar-track"><div class="health-bar-fill" style="width:${pv}%"></div></div>
+        <span class="hsr-val">${pv}%</span>
       </div>`}).join('')}
     </div>
   </div>`;
@@ -1163,13 +1171,12 @@ async function loadUserCompare(){
   if(!uid_a||!uid_b){wrap.innerHTML='<span class="empty-msg">กรอก User ID ทั้งคู่</span>';return;}
   let d;try{const r=await fetch(`/api/user-compare?guild_id=${encodeURIComponent(currentGuildId)}&uid_a=${encodeURIComponent(uid_a)}&uid_b=${encodeURIComponent(uid_b)}`);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
   function _col(s){
-    return`<div class="cmp-col">
-      <div class="cmp-name">${escHTML(s.name)}</div>
-      <div class="cmp-uid">${escHTML(s.uid)}</div>
-      ${[['⏱ เวลารวม',s.duration],['🎮 Sessions',s.session_count],['🔥 Streak Max',s.streak_max+' วัน'],['📅 วันที่ active',s.active_days],['⚡ 7 วันล่าสุด',s.last_7d_sessions+' sess'],['📍 ห้องโปรด',s.favorite_channel],['🗓 เริ่มต้น',s.first_seen],['🕐 ล่าสุด',s.last_seen]].map(([k,v])=>`<div class="cmp-row"><span class="cmp-key">${k}</span><span class="cmp-val">${escHTML(String(v??'-'))}</span></div>`).join('')}
+    return`<div class="compare-col">
+      <div class="compare-col-name">${escHTML(s.name)}</div>
+      ${[['เวลารวม',s.duration],['Sessions',s.session_count],['Streak Max',s.streak_max+' วัน'],['วันที่ active',s.active_days],['7 วันล่าสุด',s.last_7d_sessions+' sess'],['ห้องโปรด',s.favorite_channel],['เริ่มต้น',s.first_seen],['ล่าสุด',s.last_seen]].map(([k,v])=>`<div class="compare-stat"><span class="compare-stat-label">${k}</span><span class="compare-stat-val">${escHTML(String(v??'-'))}</span></div>`).join('')}
     </div>`;
   }
-  wrap.innerHTML=`<div class="cmp-grid">${_col(d.uid_a)}${_col(d.uid_b)}</div>`;
+  wrap.innerHTML=`<div class="compare-grid">${_col(d.uid_a)}${_col(d.uid_b)}</div>`;
 }
 
 // ── Streak Board ──────────────────────────────────────────────────────────────
@@ -1178,12 +1185,12 @@ async function loadStreakBoard(){
   const wrap=document.getElementById('streakBoardWrap');if(!wrap)return;
   let rows;try{const r=await fetch('/api/streak-board?guild_id='+currentGuildId+'&limit=10');if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
   if(!rows.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
-  wrap.innerHTML='<div class="strk-list">'
-    +rows.map((u,i)=>`<div class="strk-row">
-      <span class="strk-rank">${i+1}</span>
-      <span class="strk-name">${escHTML(u.name)}</span>
-      <span class="strk-streak">${u.current_streak}<small> วัน</small></span>
-      <span class="strk-total">${u.duration}</span>
+  wrap.innerHTML='<div class="streak-list">'
+    +rows.map((u,i)=>`<div class="streak-row">
+      <span class="streak-rank">${i+1}</span>
+      <span class="streak-name">${escHTML(u.name)}</span>
+      <span class="streak-fire">${u.current_streak}d</span>
+      <span class="streak-days">${escHTML(u.duration)}</span>
     </div>`).join('')+'</div>';
 }
 
@@ -1195,12 +1202,12 @@ async function loadSessionDay(){
   const date=inp?.value||new Date().toISOString().slice(0,10);
   let rows;try{const r=await fetch(`/api/session-day?guild_id=${encodeURIComponent(currentGuildId)}&date=${encodeURIComponent(date)}`);if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
   if(!rows.length){wrap.innerHTML='<span class="empty-msg">ไม่มี session วันนี้</span>';return;}
-  wrap.innerHTML='<div class="sday-list">'
-    +rows.map(s=>`<div class="sday-row">
-      <span class="sday-time">${escHTML(s.join.slice(11,16))}</span>
-      <span class="sday-name">${escHTML(s.name)}</span>
-      <span class="sday-ch">${escHTML(s.channel)}</span>
-      <span class="sday-dur">${escHTML(s.duration)}</span>
+  wrap.innerHTML='<div class="session-day-list">'
+    +rows.map(s=>`<div class="session-day-row">
+      <span class="session-day-time">${escHTML(s.join.slice(11,16))}</span>
+      <span class="session-day-name">${escHTML(s.name)}</span>
+      <span class="session-day-ch">${escHTML(s.channel)}</span>
+      <span class="session-day-dur">${escHTML(s.duration)}</span>
     </div>`).join('')+'</div>';
 }
 
@@ -1216,7 +1223,7 @@ async function loadMarathon(){
       <span class="marathon-name">${escHTML(s.name)}</span>
       <span class="marathon-ch">${escHTML(s.channel)}</span>
       <span class="marathon-dur">${escHTML(s.duration)}</span>
-      <span class="marathon-date">${escHTML(s.date)}</span>
+      <span class="marathon-date">${escHTML(s.date?.slice(0,10)||'-')}</span>
     </div>`).join('')+'</div>';
 }
 
@@ -1227,12 +1234,12 @@ async function loadEngagementScore(){
   let rows;try{const r=await fetch('/api/engagement-score?guild_id='+currentGuildId+'&limit=15');if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
   if(!rows.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
   const max=rows[0].score||1;
-  wrap.innerHTML='<div class="eng-list">'
-    +rows.map((u,i)=>`<div class="eng-row">
-      <span class="eng-rank">${i+1}</span>
-      <span class="eng-name">${escHTML(u.name)}</span>
-      <div class="eng-bar-wrap"><div class="eng-bar" style="width:${(u.score/max*100).toFixed(1)}%"></div></div>
-      <span class="eng-score">${u.score}</span>
+  wrap.innerHTML='<div class="engage-list">'
+    +rows.map((u,i)=>`<div class="engage-row">
+      <span class="engage-rank">${i+1}</span>
+      <span class="engage-name">${escHTML(u.name)}</span>
+      <div class="engage-bar-track"><div class="engage-bar-fill" style="width:${(u.score/max*100).toFixed(1)}%"></div></div>
+      <span class="engage-score">${u.score}</span>
     </div>`).join('')+'</div>';
 }
 
@@ -1261,12 +1268,13 @@ async function loadNewUserJourney(){
   let rows;try{const r=await fetch('/api/new-user-journey?guild_id='+currentGuildId+'&cohort_weeks=8');if(!r.ok)throw new Error(r.status);rows=await r.json();}catch(e){return;}
   if(!rows.length){wrap.innerHTML='<span class="empty-msg">ยังไม่มี new users</span>';return;}
   wrap.innerHTML='<div class="journey-list">'
+    +'<div class="journey-row journey-header"><span>ชื่อ</span><span>เข้าร่วม</span><span>D2</span><span>30d sess</span><span>W1</span></div>'
     +rows.map(u=>`<div class="journey-row">
       <span class="journey-name">${escHTML(u.name)}</span>
-      <span class="journey-joined">${u.first_seen}</span>
-      <span class="journey-d2">${u.days_to_second!=null?u.days_to_second+'d':'-'}</span>
-      <span class="journey-s30">${u.sessions_in_first_30d} sess</span>
-      <span class="journey-ret ${u.retained_week1?'ret-yes':'ret-no'}">${u.retained_week1?'✓':'✗'}</span>
+      <span class="journey-val">${escHTML(u.first_seen?.slice(0,10)||'-')}</span>
+      <span class="journey-val">${u.days_to_second!=null?u.days_to_second+'d':'-'}</span>
+      <span class="journey-val">${u.sessions_in_first_30d}</span>
+      <span class="journey-retained ${u.retained_week1?'yes':'no'}">${u.retained_week1?'✓':'✗'}</span>
     </div>`).join('')+'</div>';
 }
 
@@ -1277,12 +1285,12 @@ async function loadPeakSummary(){
   let d;try{const r=await fetch('/api/peak-summary?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   const fmt=h=>h!=null?`${String(Number(h)).padStart(2,'0')}:00`:'-';
   wrap.innerHTML=`<div class="peak-grid">
-    <div class="peak-card"><div class="peak-val">${fmt(d.busiest_hour)}</div><div class="peak-lbl">Busiest Hour<br><small>${escHTML(String(d.busiest_hour_count??'-'))} sessions</small></div></div>
-    <div class="peak-card"><div class="peak-val">${fmt(d.quietest_hour)}</div><div class="peak-lbl">Quietest Hour</div></div>
-    <div class="peak-card"><div class="peak-val">${escHTML(d.busiest_dow_label??'-')}</div><div class="peak-lbl">Busiest Day</div></div>
-    <div class="peak-card"><div class="peak-val">${escHTML(d.most_active_date||'-')}</div><div class="peak-lbl">Most Active Date<br><small>${escHTML(String(d.most_active_sessions??'-'))} sessions</small></div></div>
-    <div class="peak-card"><div class="peak-val">${escHTML(String(d.avg_session_min??'-'))} m</div><div class="peak-lbl">Avg Session</div></div>
-    <div class="peak-card"><div class="peak-val">${escHTML(String(d.total_users??'-'))}</div><div class="peak-lbl">Total Users</div></div>
+    <div class="peak-card"><div class="peak-card-label">Busiest Hour</div><div class="peak-card-value">${fmt(d.busiest_hour)}</div><div class="peak-card-sub">${escHTML(String(d.busiest_hour_count??'-'))} sessions</div></div>
+    <div class="peak-card"><div class="peak-card-label">Quietest Hour</div><div class="peak-card-value">${fmt(d.quietest_hour)}</div></div>
+    <div class="peak-card"><div class="peak-card-label">Busiest Day</div><div class="peak-card-value">${escHTML(d.busiest_dow_label??'-')}</div></div>
+    <div class="peak-card"><div class="peak-card-label">Most Active Date</div><div class="peak-card-value" style="font-size:14px">${escHTML(d.most_active_date||'-')}</div><div class="peak-card-sub">${escHTML(String(d.most_active_sessions??'-'))} sessions</div></div>
+    <div class="peak-card"><div class="peak-card-label">Avg Session</div><div class="peak-card-value">${escHTML(String(d.avg_session_min??'-'))} <span style="font-size:12px;font-weight:400">min</span></div></div>
+    <div class="peak-card"><div class="peak-card-label">Total Users</div><div class="peak-card-value">${escHTML(String(d.total_users??'-'))}</div></div>
   </div>`;
 }
 
