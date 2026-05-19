@@ -430,23 +430,25 @@ def record_leave(guild_id, member_id) -> list:
     elapsed    = int((leave_time - join_time).total_seconds())
     gid = str(guild_id)
     uid = str(member_id)
-    if gid not in weekly_stats:
-        weekly_stats[gid] = {}
-    if uid not in weekly_stats[gid]:
-        weekly_stats[gid][uid] = {'name': display_name, 'seconds': 0}
-    weekly_stats[gid][uid]['name']    = display_name
-    weekly_stats[gid][uid]['seconds'] += elapsed
+    with _lock_stats:
+        if gid not in weekly_stats:
+            weekly_stats[gid] = {}
+        if uid not in weekly_stats[gid]:
+            weekly_stats[gid][uid] = {'name': display_name, 'seconds': 0}
+        weekly_stats[gid][uid]['name']    = display_name
+        weekly_stats[gid][uid]['seconds'] += elapsed
     save_stats()
-    session_history.append({
-        'guild_id': gid,
-        'uid':      uid,
-        'name':     display_name,
-        'channel':  channel_name,
-        'join':     join_time.strftime('%Y-%m-%d %H:%M'),
-        'leave':    leave_time.strftime('%Y-%m-%d %H:%M'),
-        'duration': format_duration(elapsed),
-        'seconds':  elapsed,
-    })
+    with _lock_history:
+        session_history.append({
+            'guild_id': gid,
+            'uid':      uid,
+            'name':     display_name,
+            'channel':  channel_name,
+            'join':     join_time.strftime('%Y-%m-%d %H:%M'),
+            'leave':    leave_time.strftime('%Y-%m-%d %H:%M'),
+            'duration': format_duration(elapsed),
+            'seconds':  elapsed,
+        })
     save_history()
     # Feature 6: update channel activity
     if gid not in channel_activity:
@@ -1015,12 +1017,13 @@ async def daily_backup_task():
     # Auto-purge sessions older than 90 days (ทุกจันทร์)
     if now.weekday() == 0:
         cutoff = now - timedelta(days=90)
-        before = len(session_history)
-        session_history[:] = [
-            s for s in session_history
-            if datetime.strptime(s.get('join', '2000-01-01 00:00'), '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ) >= cutoff
-        ]
-        purged = before - len(session_history)
+        with _lock_history:
+            before = len(session_history)
+            session_history[:] = [
+                s for s in session_history
+                if datetime.strptime(s.get('join', '2000-01-01 00:00'), '%Y-%m-%d %H:%M').replace(tzinfo=THAI_TZ) >= cutoff
+            ]
+            purged = before - len(session_history)
         if purged > 0:
             save_history()
             log(f'Auto-purged {purged} sessions older than 90 days')
@@ -1768,7 +1771,8 @@ async def _handle_voice_join(member, after, channel, gid):
     """Handle a member joining a voice channel."""
     record_join(gid, member.id, member.display_name, after.channel.name)
     record_voice_event(gid, member.id)
-    event_counts['join'] += 1
+    with _lock_event_counts:
+        event_counts['join'] += 1
     if get_gc(gid, 'announce_join', True):
         await channel.send(f'{member.display_name} เข้าห้อง {after.channel.name}')
     fire_outbound_webhook('voice_join', {'user': member.display_name, 'channel': after.channel.name, 'guild': member.guild.name})
@@ -1782,7 +1786,8 @@ async def _handle_voice_leave(member, before, channel, gid):
     """Handle a member leaving a voice channel."""
     new_milestones = record_leave(gid, member.id)
     record_voice_event(gid, member.id)
-    event_counts['leave'] += 1
+    with _lock_event_counts:
+        event_counts['leave'] += 1
     if get_gc(gid, 'announce_leave', True):
         await channel.send(f'{member.display_name} ออกจากห้อง {before.channel.name}')
     fire_outbound_webhook('voice_leave', {'user': member.display_name, 'channel': before.channel.name, 'guild': member.guild.name})
@@ -1829,20 +1834,24 @@ async def on_voice_state_update(member, before, after):
         await _handle_voice_move(member, before, after, channel, gid)
 
     if before.self_mute != after.self_mute and get_gc(gid, 'announce_mute', True) and check_cooldown(member.id, 'mute', guild_id=gid):
-        event_counts['mute'] += 1
+        with _lock_event_counts:
+            event_counts['mute'] += 1
         await channel.send(f'{member.display_name} {"ปิดไมค์" if after.self_mute else "เปิดไมค์"}')
 
     if before.self_deaf != after.self_deaf and get_gc(gid, 'announce_deaf', True) and check_cooldown(member.id, 'deaf', guild_id=gid):
-        event_counts['deaf'] += 1
+        with _lock_event_counts:
+            event_counts['deaf'] += 1
         await channel.send(f'{member.display_name} {"ปิดหู" if after.self_deaf else "เปิดหู"}')
 
     log(f'stream: {before.self_stream}->{after.self_stream} | video: {before.self_video}->{after.self_video}')
     if before.self_stream != after.self_stream and get_gc(gid, 'announce_stream', True):
-        event_counts['stream'] += 1
+        with _lock_event_counts:
+            event_counts['stream'] += 1
         await channel.send(f'{member.display_name} {"เริ่ม stream" if after.self_stream else "หยุด stream"}')
 
     if before.self_video != after.self_video and get_gc(gid, 'announce_video', True):
-        event_counts['video'] += 1
+        with _lock_event_counts:
+            event_counts['video'] += 1
         await channel.send(f'{member.display_name} {"เปิดกล้อง" if after.self_video else "ปิดกล้อง"}')
 # =======================
 
@@ -2258,7 +2267,8 @@ def api_status():
     stats_sorted   = sorted(combined.items(), key=lambda x: x[1]['seconds'], reverse=True)
     weekly_display = [{'uid': k, 'name': v['name'], 'time': format_duration(v['seconds'])} for k, v in stats_sorted[:10]]
     # Avg / median session duration (all-time for this guild)
-    guild_secs = [s['seconds'] for s in session_history if s.get('guild_id') == guild_id and s.get('seconds', 0) > 0]
+    with _lock_history:
+        guild_secs = [s['seconds'] for s in session_history if s.get('guild_id') == guild_id and s.get('seconds', 0) > 0]
     total_sessions = len(guild_secs)
     if guild_secs:
         avg_secs    = int(sum(guild_secs) / total_sessions)
@@ -2500,12 +2510,15 @@ def api_history():
     guild_id, err = _guild_id_or_error()
     if err:
         return err
-    filtered = [s for s in session_history if s.get('guild_id') == guild_id]
+    with _lock_history:
+        filtered = [s for s in session_history if s.get('guild_id') == guild_id]
     return jsonify(filtered[-50:])
 
 @flask_app.route('/api/profile/<uid>')
 @require_auth
 def api_profile(uid):
+    if not _validate_snowflake(uid):
+        return jsonify({'error': 'invalid uid'}), 400
     # Accept guild_id from query param OR fall back to session (for direct URL access)
     guild_id = request.args.get('guild_id', '').strip()
     if not guild_id:
@@ -2526,8 +2539,9 @@ def api_profile(uid):
         if str(mid) == uid and str(gid) == guild_id:
             seconds += int((datetime.now(THAI_TZ) - jt).total_seconds())
             name = n
-    sessions = [s for s in session_history
-                if s.get('guild_id') == guild_id and s.get('uid') == uid]
+    with _lock_history:
+        sessions = [s for s in session_history
+                    if s.get('guild_id') == guild_id and s.get('uid') == uid]
     hour_counts = {}
     for s in sessions:
         try:
@@ -3459,7 +3473,9 @@ def api_leaderboard():
         days_map = {'30d': 30, '90d': 90}
         cutoff   = now - timedelta(days=days_map.get(period, 36500))
         combined = {}
-        for s in session_history:
+        with _lock_history:
+            hist_snap = list(session_history)
+        for s in hist_snap:
             if s.get('guild_id') != gid:
                 continue
             try:
@@ -3568,12 +3584,14 @@ def api_retention():
         return jsonify(_ret_cached[0])
     now = datetime.now(THAI_TZ)
     # Build weekly uid sets from session_history
+    with _lock_history:
+        hist_snap = list(session_history)
     weeks = []
     for w in range(num_weeks - 1, -1, -1):
         week_end   = now - timedelta(weeks=w)
         week_start = week_end - timedelta(weeks=1)
         uids = set()
-        for s in session_history:
+        for s in hist_snap:
             if s.get('guild_id') != gid:
                 continue
             try:
@@ -4364,6 +4382,8 @@ def api_user_compare():
     uid_b = request.args.get('uid_b', '').strip()
     if not uid_a or not uid_b:
         return jsonify({'error': 'uid_a and uid_b required'}), 400
+    if not _validate_snowflake(uid_a) or not _validate_snowflake(uid_b):
+        return jsonify({'error': 'invalid uid format'}), 400
     now    = datetime.now(THAI_TZ)
     d7_s   = (now - timedelta(days=7)).strftime('%Y-%m-%d')
     with _lock_history:
@@ -4613,6 +4633,8 @@ def api_user_heatmap():
     uid = request.args.get('uid', '').strip()
     if not uid:
         return jsonify({'error': 'uid required'}), 400
+    if not _validate_snowflake(uid):
+        return jsonify({'error': 'invalid uid format'}), 400
     _key = (gid, uid)
     _cached = _uheat_cache.get(_key)
     if _cached and time.monotonic() < _cached[1]:
