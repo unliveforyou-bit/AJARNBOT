@@ -379,6 +379,30 @@ def check_voice_spam(guild_id, member_id):
         return len(events) >= spam_max
 # =====================
 
+# ===== Avatar persistence helpers =====
+def _build_avatar_url(member) -> str | None:
+    """Return a stable CDN URL for member's avatar (128px), or None."""
+    try:
+        return str(member.display_avatar.with_size(128).url)
+    except Exception:
+        return None
+
+def _default_avatar_url(uid_str: str) -> str:
+    """Discord's coloured default avatar based on user ID (no hash needed)."""
+    idx = (int(uid_str) >> 22) % 6
+    return f'https://cdn.discordapp.com/embed/avatars/{idx}.png'
+
+def _persist_avatar(gid: str, uid_str: str, member) -> None:
+    """Store current avatar URL in user_daily so it survives offline periods."""
+    url = _build_avatar_url(member)
+    if not url:
+        return
+    if gid not in user_daily:
+        user_daily[gid] = {}
+    entry = user_daily[gid].setdefault(uid_str, {'name': member.display_name, 'dates': {}})
+    entry['avatar_url'] = url
+    entry['name'] = member.display_name  # keep name fresh too
+
 # ===== record join/leave (Multi-guild) =====
 def record_join(guild_id, member_id, display_name, channel_name=''):
     voice_join_times[(guild_id, member_id)] = (display_name, datetime.now(THAI_TZ), channel_name)
@@ -744,6 +768,8 @@ intents                 = discord.Intents.default()
 intents.voice_states    = True
 intents.messages        = True
 intents.message_content = True
+intents.members         = True   # privileged — enable in Discord Dev Portal → Bot → Privileged Gateway Intents
+intents.presences       = True   # privileged — same page, needed for online status
 
 class VoiceBot(discord.ext.commands.Bot):
     def __init__(self):
@@ -1135,6 +1161,18 @@ async def on_ready():
                             # New user (joined while bot was offline) — use now as fallback
                             voice_join_times[key] = (member.display_name, datetime.now(THAI_TZ), vc.name)
     log(f'Voice snapshot: {len(voice_join_times)} members tracked ({restored} sessions restored from disk)')
+    # Persist avatar URLs for all cached guild members so dashboard shows avatars
+    # even when members are offline
+    avatar_saved = 0
+    for guild in client.guilds:
+        gid_str = str(guild.id)
+        for member in guild.members:
+            if not member.bot:
+                _persist_avatar(gid_str, str(member.id), member)
+                avatar_saved += 1
+    if avatar_saved:
+        save_user_daily()
+        log(f'Avatar cache: {avatar_saved} member avatars saved to user_daily')
     send_content.start()
     weekly_summary_task.start()
     daily_backup_task.start()
@@ -1770,6 +1808,7 @@ async def on_raw_reaction_remove(payload):
 async def _handle_voice_join(member, after, channel, gid):
     """Handle a member joining a voice channel."""
     record_join(gid, member.id, member.display_name, after.channel.name)
+    _persist_avatar(str(gid), str(member.id), member)
     record_voice_event(gid, member.id)
     with _lock_event_counts:
         event_counts['join'] += 1
@@ -2660,12 +2699,19 @@ def api_members():
     guild_obj = client.get_guild(int(guild_id))
     ud = user_daily.get(str(guild_id), {})
     ws = weekly_stats.get(str(guild_id), {})
+    gid_str = str(guild_id)
+    # UIDs currently in voice for this guild
+    in_voice_uids: set[str] = {
+        str(mid) for (gid_k, mid) in voice_join_times if str(gid_k) == gid_str
+    }
     # Start with tracked users (from voice sessions)
     seen = set(ud.keys()) | set(ws.keys())
-    result_map = {}
+    result_map: dict = {}
     for uid_str in seen:
         udata = ud.get(uid_str, {})
         wdata = ws.get(uid_str, {})
+        stored_avatar = udata.get('avatar_url') or _default_avatar_url(uid_str)
+        in_voice = uid_str in in_voice_uids
         result_map[uid_str] = {
             'uid':              uid_str,
             'name':             udata.get('name') or wdata.get('name') or 'Unknown',
@@ -2674,15 +2720,25 @@ def api_members():
             'session_count':    udata.get('session_count', 0),
             'last_seen':        udata.get('last_seen', ''),
             'streak_max':       udata.get('streak_max', 0),
-            'avatar_url':       None,
+            'avatar_url':       stored_avatar,
+            'in_voice':         in_voice,
+            'status':           'voice' if in_voice else 'offline',
         }
-    # Also include all cached guild members (even those with no voice history)
+    # Also include / enrich from cached guild members (live presence data)
+    _dirty = False
     if guild_obj:
         for member in guild_obj.members:
             if member.bot:
                 continue
             uid_str = str(member.id)
-            avatar_url = str(member.display_avatar.url) if member.display_avatar else None
+            live_url = _build_avatar_url(member) or _default_avatar_url(uid_str)
+            in_voice = uid_str in in_voice_uids
+            # Resolve presence status
+            try:
+                raw_status = str(member.status.value)   # 'online'|'idle'|'dnd'|'offline'
+            except Exception:
+                raw_status = 'offline'
+            status_str = 'voice' if in_voice else raw_status
             if uid_str not in result_map:
                 result_map[uid_str] = {
                     'uid':              uid_str,
@@ -2692,15 +2748,30 @@ def api_members():
                     'session_count':    0,
                     'last_seen':        '',
                     'streak_max':       0,
-                    'avatar_url':       avatar_url,
+                    'avatar_url':       live_url,
+                    'in_voice':         in_voice,
+                    'status':           status_str,
                 }
             else:
-                # Update avatar from live cache
-                result_map[uid_str]['avatar_url'] = avatar_url
-                # Update name to current display name
+                result_map[uid_str]['avatar_url'] = live_url
+                result_map[uid_str]['in_voice']   = in_voice
+                result_map[uid_str]['status']     = status_str
                 if result_map[uid_str]['name'] in ('Unknown', ''):
                     result_map[uid_str]['name'] = member.display_name
-    result = sorted(result_map.values(), key=lambda x: x['alltime_seconds'], reverse=True)
+            # Keep user_daily avatar fresh
+            ud_entry = ud.get(uid_str)
+            if ud_entry and ud_entry.get('avatar_url') != live_url:
+                ud_entry['avatar_url'] = live_url
+                _dirty = True
+    if _dirty:
+        save_user_daily()
+    # Sort priority: voice > online > idle > dnd > offline
+    _status_order = {'voice': 0, 'online': 1, 'idle': 2, 'dnd': 3, 'offline': 4}
+    result = sorted(
+        result_map.values(),
+        key=lambda x: (_status_order.get(x.get('status', 'offline'), 4),
+                       -x.get('alltime_seconds', 0)),
+    )
     return jsonify(result)
 
 @flask_app.route('/api/votes')
@@ -3706,7 +3777,8 @@ _GROWTH_TTL = 300
 def api_user_growth():
     """
     New vs returning users per calendar week.
-    ?guild_id=X&weeks=12  (default 12, max 52)
+    ?guild_id=X&days=7|14|30  (preferred, default 7)
+    ?guild_id=X&weeks=N        (legacy, still supported)
     Response: [{week_start, new_users, returning_users, total}]
     new = first_seen falls in that week; returning = seen before but active this week.
     """
@@ -3715,9 +3787,14 @@ def api_user_growth():
         return err
     gid = str(guild_id)
     try:
-        num_weeks = max(2, min(int(request.args.get('weeks', 12)), 52))
+        # 'days' takes priority; convert to whole weeks (ceil)
+        if 'days' in request.args:
+            days_val = max(7, min(int(request.args.get('days', 7)), 90))
+            num_weeks = max(1, (days_val + 6) // 7)
+        else:
+            num_weeks = max(2, min(int(request.args.get('weeks', 2)), 52))
     except ValueError:
-        return jsonify({'error': 'invalid weeks'}), 400
+        return jsonify({'error': 'invalid parameter'}), 400
     _key = (gid, num_weeks)
     _cached = _growth_cache.get(_key)
     if _cached and time.monotonic() < _cached[1]:
@@ -5037,6 +5114,44 @@ def api_action_rank():
                 await send_leaderboard(ch)
         asyncio.run_coroutine_threadsafe(_do(), bot_loop)
     return jsonify({'ok': True})
+
+@flask_app.route('/api/action/dm-user', methods=['POST'])
+@require_auth
+def api_action_dm_user():
+    """Send a DM to a specific member via the Discord bot.
+    Body: {guild_id, uid, message}
+    """
+    try:
+        data      = request.get_json(force=True) or {}
+        guild_id  = str(data.get('guild_id', '')).strip()
+        uid       = str(data.get('uid', '')).strip()
+        msg_text  = str(data.get('message', '')).strip()
+    except Exception:
+        return jsonify({'error': 'invalid body'}), 400
+    if not guild_id or not uid or not msg_text:
+        return jsonify({'error': 'guild_id, uid and message required'}), 400
+    if not _validate_snowflake(uid):
+        return jsonify({'error': 'invalid uid'}), 400
+    if len(msg_text) > 1800:
+        return jsonify({'error': 'message too long (max 1800 chars)'}), 400
+    if not bot_loop:
+        return jsonify({'error': 'bot not ready'}), 503
+
+    async def _do_dm():
+        try:
+            g   = client.get_guild(int(guild_id))
+            if g is None:
+                return
+            m = g.get_member(int(uid))
+            if m is None:
+                m = await g.fetch_member(int(uid))
+            await m.send(msg_text)
+        except Exception as exc:
+            log(f'dm-user error uid={uid}: {exc}')
+
+    asyncio.run_coroutine_threadsafe(_do_dm(), bot_loop)
+    return jsonify({'ok': True})
+
 
 async def _test_joke(guild_id=None):
     channel = get_guild_ch(guild_id, 'content')

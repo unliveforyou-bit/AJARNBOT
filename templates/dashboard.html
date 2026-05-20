@@ -407,7 +407,7 @@
     <section class="card" id="ct-inactive-section" aria-labelledby="ct-inactive">
       <div class="card-header">
         <div class="card-icon" style="background:rgba(248,81,73,0.12)" aria-hidden="true"><i class="ph-bold ph-user-minus" style="color:var(--red)"></i></div>
-        <h2 class="card-title" id="ct-inactive">สมาชิกที่ไม่ active (14+ วัน)</h2>
+        <h2 class="card-title" id="ct-inactive">สมาชิกที่ไม่ active (7+ วัน)</h2>
       </div>
       <div class="card-body">
         <div id="inactiveList"><span class="empty-msg">กำลังโหลด...</span></div>
@@ -520,7 +520,12 @@
     <section class="card" id="ct-growth-section" aria-labelledby="ct-growth">
       <div class="card-header">
         <div class="card-icon green" aria-hidden="true"><i class="ph-bold ph-user-plus"></i></div>
-        <h2 class="card-title" id="ct-growth">User Growth (12 สัปดาห์)</h2>
+        <h2 class="card-title" id="ct-growth">User Growth</h2>
+          <div class="period-btns" role="group" aria-label="เลือกช่วงเวลา User Growth" style="margin-left:auto">
+            <button class="period-btn active" onclick="loadUserGrowth(7,this)" aria-pressed="true">7d</button>
+            <button class="period-btn" onclick="loadUserGrowth(14,this)" aria-pressed="false">14d</button>
+            <button class="period-btn" onclick="loadUserGrowth(30,this)" aria-pressed="false">30d</button>
+          </div>
       </div>
       <div class="card-body">
         <div id="userGrowthWrap"><span class="empty-msg">ยังไม่มีข้อมูล</span></div>
@@ -652,6 +657,14 @@
         <button class="btn btn-secondary" style="height:30px;padding:0 12px;font-size:12px;margin-left:auto" onclick="loadMembers()"><i class="ph-bold ph-arrows-clockwise" aria-hidden="true"></i> Refresh</button>
       </div>
       <div class="card-body" style="padding:16px">
+        <!-- Legend -->
+        <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-bottom:10px;align-items:center">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#5865f2;margin-right:4px;vertical-align:middle"></span>ใน Voice</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#3ba55c;margin-right:4px;vertical-align:middle"></span>ออนไลน์</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#faa81a;margin-right:4px;vertical-align:middle"></span>เปลี่ยนแปลง</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#ed4245;margin-right:4px;vertical-align:middle"></span>ห้ามรบกวน</span>
+          <span style="opacity:.6"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#747f8d;margin-right:4px;vertical-align:middle"></span>ออฟไลน์ (ภาพเทา)</span>
+        </div>
         <div class="members-search-wrap">
           <i class="ph-bold ph-magnifying-glass members-search-icon" aria-hidden="true"></i>
           <input id="membersSearch" class="members-search" type="search" placeholder="ค้นหาชื่อสมาชิก..." oninput="_debouncedFilterMembers(this.value)" aria-label="ค้นหาสมาชิก">

@@ -714,18 +714,30 @@ async function loadLeaderboard(period,btn){
 async function loadInactive(){
   if(!currentGuildId)return;
   const el=document.getElementById('inactiveList');if(!el)return;
-  let d;try{const r=await fetch('/api/inactive?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
-  if(!d||!d.length){el.innerHTML='<span class="empty-msg">ไม่มีสมาชิกที่ inactive เกิน 14 วัน</span>';return;}
+  let d;try{const r=await fetch('/api/inactive?guild_id='+currentGuildId+'&days=7');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  if(!d||!d.length){el.innerHTML='<span class="empty-msg">ไม่มีสมาชิกที่ inactive เกิน 7 วัน</span>';return;}
   el.innerHTML=d.map(u=>{
     const days=u.days_inactive;
     const cls=days>=60?'gone':days>=30?'danger':'warn';
+    const dmBtn='<button class="btn-dm" title="ส่ง DM" aria-label="ส่ง DM ถึง '+escHTML(u.name)+'" onclick="sendInactiveDM(\''+escHTML(u.uid)+'\',\''+escHTML(u.name.replace(/'/g,"\\'"))+'\')"><i class="ph-bold ph-paper-plane-tilt" aria-hidden="true"></i></button>';
     return'<div class="inactive-row">'
       +_avImg(u.uid,u.name)
       +'<span class="inactive-name">'+_profileLink(u.uid,u.name)+'</span>'
       +'<span class="inactive-date">'+escHTML(u.last_seen)+'</span>'
       +'<span class="inactive-badge '+cls+'">'+days+' วัน</span>'
+      +dmBtn
       +'</div>';
   }).join('');
+}
+
+async function sendInactiveDM(uid,name){
+  const msg=prompt('ข้อความ DM ถึง '+name+':','สวัสดี! แวะมาคุยใน Discord ด้วยนะ 😊');
+  if(!msg||!msg.trim())return;
+  try{
+    const r=await _post('/api/action/dm-user',{guild_id:currentGuildId,uid,message:msg.trim()});
+    if(r.ok)showToast('ส่ง DM ถึง '+name+' แล้ว');
+    else showToast('ส่ง DM ไม่ได้ ('+r.status+')',true);
+  }catch(e){showToast('ส่ง DM ไม่ได้',true);}
 }
 
 // ── Retention chart ───────────────────────────────────────────────────────────
@@ -875,40 +887,64 @@ async function notionSetup(btn){
 // ── Member browser ────────────────────────────────────────────────────────────
 let _membersCache=[];
 let _avatarMap={};  // uid -> avatar_url (populated from /api/members)
+
+const _STATUS_DOT={
+  voice:   {color:'#5865f2', label:'ใน Voice'},
+  online:  {color:'#3ba55c', label:'ออนไลน์'},
+  idle:    {color:'#faa81a', label:'เปลี่ยนแปลง'},
+  dnd:     {color:'#ed4245', label:'ห้ามรบกวน'},
+  offline: {color:'#747f8d', label:'ออฟไลน์'},
+};
+
 async function loadMembers(){
   if(!currentGuildId)return;
   const wrap=document.getElementById('membersList');if(!wrap)return;
-  let d;try{const r=await fetch('/api/members?guild_id='+currentGuildId);if(!r.ok)throw new Error(r.status);d=await r.json();}
-  catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
+  let d;
+  try{
+    const r=await fetch('/api/members?guild_id='+currentGuildId);
+    if(!r.ok)throw new Error(r.status);
+    d=await r.json();
+  }catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่ได้</span>';return;}
   _membersCache=d||[];
   // Build uid->avatar_url map for use in all list renders
   _avatarMap={};
   _membersCache.forEach(m=>{if(m.avatar_url)_avatarMap[m.uid]=m.avatar_url;});
-  filterMembers(document.getElementById('membersSearch')?.value||'');
+  _renderMembersGrid(document.getElementById('membersSearch')?.value||'');
 }
-function filterMembers(q){
+
+function _renderMembersGrid(q){
   const wrap=document.getElementById('membersList');if(!wrap)return;
-  const rows=q?_membersCache.filter(m=>(m.name||'').toLowerCase().includes(q.toLowerCase())):_membersCache;
-  if(!rows.length){wrap.innerHTML='<span class="empty-msg">'+(q?'ไม่พบ "'+escHTML(q)+'"':'ยังไม่มีข้อมูลสมาชิก')+'</span>';return;}
-  wrap.innerHTML=rows.map(m=>{
-    const initials=(m.name||'?')[0].toUpperCase();
-    const avatarInner=m.avatar_url
-      ?'<img src="'+escHTML(m.avatar_url)+'?size=64" alt="" loading="lazy">'
-      :escHTML(initials);
-    const meta=[
-      m.alltime_duration&&m.alltime_duration!=='-'?m.alltime_duration:'',
-      m.session_count?m.session_count+' sessions':'',
-      m.last_seen?'ล่าสุด '+m.last_seen.slice(0,10):'',
-    ].filter(Boolean).join(' · ');
-    return'<a class="member-card" href="/profile/'+encodeURIComponent(m.uid)+'?guild_id='+encodeURIComponent(currentGuildId)+'" role="listitem">'
-      +'<div class="member-avatar">'+avatarInner+'</div>'
-      +'<div class="member-info"><div class="member-name">'+escHTML(m.name)+'</div>'
-      +(meta?'<div class="member-meta">'+escHTML(meta)+'</div>':'')
-      +'</div>'
-      +'<i class="ph-bold ph-caret-right member-arrow" aria-hidden="true"></i>'
-      +'</a>';
-  }).join('');
+  const rows=q
+    ?_membersCache.filter(m=>(m.name||'').toLowerCase().includes(q.toLowerCase()))
+    :_membersCache;
+  if(!rows.length){
+    wrap.innerHTML='<span class="empty-msg">'+(q?'ไม่พบ "'+escHTML(q)+'"':'ยังไม่มีข้อมูลสมาชิก')+'</span>';
+    return;
+  }
+  const statusOrder={voice:0,online:1,idle:2,dnd:3,offline:4};
+  const sorted=[...rows].sort((a,b)=>(statusOrder[a.status]??4)-(statusOrder[b.status]??4));
+  wrap.innerHTML='<div class="members-grid">'
+    +sorted.map(m=>{
+      const st=m.status||'offline';
+      const dot=_STATUS_DOT[st]||_STATUS_DOT.offline;
+      const isOffline=(st==='offline');
+      const avatarEl=m.avatar_url
+        ?`<img src="${escHTML(m.avatar_url)}?size=128" alt="" loading="lazy" class="mgrid-img${isOffline?' mgrid-gray':''}">`
+        :`<div class="mgrid-initial${isOffline?' mgrid-gray':''}">${escHTML((m.name||'?')[0].toUpperCase())}</div>`;
+      const dotEl=st!=='offline'
+        ?`<span class="mgrid-dot" style="background:${dot.color}" title="${escHTML(dot.label)}"></span>`
+        :'';
+      const href='/profile/'+encodeURIComponent(m.uid)+'?guild_id='+encodeURIComponent(currentGuildId);
+      return`<a class="mgrid-card" href="${escHTML(href)}" title="${escHTML(m.name)} — ${escHTML(dot.label)}">`
+        +`<div class="mgrid-avatar-wrap">${avatarEl}${dotEl}</div>`
+        +`<div class="mgrid-name${isOffline?' mgrid-name-off':''}">${escHTML(m.name)}</div>`
+        +'</a>';
+    }).join('')
+    +'</div>';
 }
+
+// Keep filterMembers name for backward compat (search input oninput calls it via _debouncedFilterMembers)
+function filterMembers(q){ _renderMembersGrid(q); }
 
 async function loadLogs(){
   try{
@@ -921,10 +957,16 @@ async function loadLogs(){
   }
 }
 // ── User Growth: new vs returning users per week ──────────────────────────────
-async function loadUserGrowth(){
+let _growthDays=7;
+async function loadUserGrowth(days,btn){
   if(!currentGuildId)return;
+  if(days){_growthDays=days;}
+  if(btn){
+    btn.closest('.period-btns').querySelectorAll('.period-btn').forEach(b=>{b.classList.remove('active');b.setAttribute('aria-pressed','false');});
+    btn.classList.add('active');btn.setAttribute('aria-pressed','true');
+  }
   const wrap=document.getElementById('userGrowthWrap');if(!wrap)return;
-  let d;try{const r=await fetch('/api/user-growth?guild_id='+currentGuildId+'&weeks=12');if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
+  let d;try{const r=await fetch('/api/user-growth?guild_id='+currentGuildId+'&days='+_growthDays);if(!r.ok)throw new Error(r.status);d=await r.json();}catch(e){return;}
   if(!d||!d.length||d.every(w=>w.total===0)){wrap.innerHTML='<span class="empty-msg">ยังไม่มีข้อมูล</span>';return;}
   const maxTotal=Math.max(...d.map(w=>w.total),1);
   const W=wrap.clientWidth||360,H=110,PAD=36,BAR_W=Math.max(6,Math.floor((W-PAD*2)/d.length)-2);
