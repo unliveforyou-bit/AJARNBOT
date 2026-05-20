@@ -59,6 +59,8 @@ OWNER_IDS = {uid.strip() for uid in os.environ.get('OWNER_IDS', '').split(',') i
 GOOGLE_SHEET_ID           = os.environ.get('GOOGLE_SHEET_ID', '')
 GOOGLE_SHEETS_CREDENTIALS = os.environ.get('GOOGLE_SHEETS_CREDENTIALS', '')  # JSON string
 SHEETS_OWNER_EMAIL        = os.environ.get('SHEETS_OWNER_EMAIL', '')  # Gmail to share sheet with
+GOOGLE_CREDENTIALS        = os.environ.get('GOOGLE_CREDENTIALS', '')  # service-account JSON for form sheet
+FORM_SHEET_ID             = os.environ.get('FORM_SHEET_ID', '1Vjz2MhuUnQOhna79EtWJhwvLOg8TebZb27RccSlQcbE')
 NOTION_TOKEN       = os.environ.get('NOTION_TOKEN', '')        # Notion Integration token
 NOTION_DATABASE_ID = os.environ.get('NOTION_DATABASE_ID', '')  # Notion Database ID
 
@@ -3205,6 +3207,91 @@ def api_sheets_import():
     guild_id = str(data.get('guild_id') or flask_session.get('current_guild_id') or '').strip()
     result   = import_from_sheets(guild_id or None)
     return jsonify(result), (200 if result['ok'] else 500)
+
+
+# ── Form Registrations (read-only from FORM_SHEET_ID) ────────────────────────
+_form_cache: dict = {}          # {ts: float, rows: list}
+_form_cache_ttl = 300           # 5 min cache
+
+def _get_form_gspread():
+    """Return gspread client using GOOGLE_CREDENTIALS env var."""
+    creds_json = GOOGLE_CREDENTIALS or GOOGLE_SHEETS_CREDENTIALS
+    if not creds_json:
+        return None, 'GOOGLE_CREDENTIALS not set'
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials as SACredentials
+        creds_dict = json.loads(creds_json)
+        scopes = ['https://www.googleapis.com/auth/spreadsheets.readonly',
+                  'https://www.googleapis.com/auth/drive.readonly']
+        creds = SACredentials.from_service_account_info(creds_dict, scopes=scopes)
+        return gspread.authorize(creds), None
+    except Exception as e:
+        return None, str(e)
+
+
+def _fetch_form_rows() -> tuple[list, str | None]:
+    """Fetch rows from the form response sheet. Returns (rows, error)."""
+    now = time.time()
+    if _form_cache.get('ts', 0) + _form_cache_ttl > now:
+        return _form_cache.get('rows', []), None
+    gc, err = _get_form_gspread()
+    if err:
+        return [], err
+    try:
+        ss = gc.open_by_key(FORM_SHEET_ID)
+        ws = ss.worksheet('การตอบแบบฟอร์ม 1')
+        all_rows = ws.get_all_records()
+        _form_cache['ts'] = now
+        _form_cache['rows'] = all_rows
+        return all_rows, None
+    except Exception as e:
+        return [], str(e)
+
+
+@flask_app.route('/api/form-registrations')
+@require_auth
+def api_form_registrations():
+    """Return form registration stats from the Google Form response sheet."""
+    rows, err = _fetch_form_rows()
+    if err and not rows:
+        return jsonify({'ok': False, 'error': err}), 500
+
+    # Column names from sheet: Timestamp, Email, ชื่อ (or similar), อาชีพ(หลัก), อาชีพ(รอง),
+    # วันที่ลงทะเบียน, ช่วงเวลา Guild War
+    total = len(rows)
+
+    # Count by primary job (อาชีพหลัก)
+    job_counts: dict[str, int] = {}
+    gw_counts:  dict[str, int] = {}
+    for r in rows:
+        job = str(r.get('อาชีพ(หลัก)', r.get('อาชีพ (หลัก)', ''))).strip()
+        if job:
+            job_counts[job] = job_counts.get(job, 0) + 1
+        gw = str(r.get('ช่วงเวลา Guild War', '')).strip()
+        if gw:
+            gw_counts[gw] = gw_counts.get(gw, 0) + 1
+
+    top_jobs = sorted(job_counts.items(), key=lambda x: -x[1])[:8]
+    top_gw   = sorted(gw_counts.items(),  key=lambda x: -x[1])[:6]
+
+    # Recent 10 registrants (name + timestamp)
+    recent = []
+    for r in rows[-10:][::-1]:
+        name = str(r.get('ชื่อ', r.get('Name', r.get('ชื่อ-สกุล', '')))).strip()
+        ts   = str(r.get('Timestamp', '')).strip()
+        if name:
+            recent.append({'name': name, 'timestamp': ts})
+
+    return jsonify({
+        'ok':       True,
+        'total':    total,
+        'jobs':     [{'label': k, 'count': v} for k, v in top_jobs],
+        'gw_slots': [{'label': k, 'count': v} for k, v in top_gw],
+        'recent':   recent,
+        'error':    err,
+    })
+
 
 # ── Notion Integration ───────────────────────────────────────────────────────
 _NOTION_API   = 'https://api.notion.com/v1'

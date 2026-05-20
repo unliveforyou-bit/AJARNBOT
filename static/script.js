@@ -223,7 +223,7 @@ async function switchGuild(guildId){
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
     loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();
     loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
-    loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();
+    loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();
     loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
@@ -1036,6 +1036,54 @@ async function loadCoPresence(){
     }).join('')+'</div>';
 }
 
+// ── Form Registrations ────────────────────────────────────────────────────────
+async function loadFormRegistrations(){
+  const wrap=document.getElementById('formRegWrap');
+  const badge=document.getElementById('formRegTotal');
+  if(!wrap)return;
+  let d;
+  try{
+    const r=await fetch('/api/form-registrations');
+    if(!r.ok)throw new Error(r.status);
+    d=await r.json();
+  }catch(e){wrap.innerHTML='<span class="empty-msg">โหลดไม่สำเร็จ</span>';return;}
+  if(!d||!d.ok){wrap.innerHTML='<span class="empty-msg">'+(d?.error||'ไม่มีข้อมูล')+'</span>';return;}
+  if(badge)badge.textContent=d.total+' คน';
+  let html='<div class="formreg-grid">';
+  // jobs bar
+  if(d.jobs&&d.jobs.length){
+    const max=d.jobs[0].count||1;
+    html+='<div class="formreg-col"><div class="formreg-sub">อาชีพหลัก</div>';
+    d.jobs.forEach(j=>{
+      const pct=Math.round(j.count/max*100);
+      html+=`<div class="formreg-row"><span class="formreg-label">${j.label}</span>`+
+            `<div class="formreg-bar-wrap"><div class="formreg-bar" style="width:${pct}%"></div></div>`+
+            `<span class="formreg-cnt">${j.count}</span></div>`;
+    });
+    html+='</div>';
+  }
+  // gw slots
+  if(d.gw_slots&&d.gw_slots.length){
+    const maxg=d.gw_slots[0].count||1;
+    html+='<div class="formreg-col"><div class="formreg-sub">ช่วงเวลา GW</div>';
+    d.gw_slots.forEach(g=>{
+      const pct=Math.round(g.count/maxg*100);
+      html+=`<div class="formreg-row"><span class="formreg-label">${g.label}</span>`+
+            `<div class="formreg-bar-wrap"><div class="formreg-bar" style="width:${pct}%;background:var(--green,#22c55e)"></div></div>`+
+            `<span class="formreg-cnt">${g.count}</span></div>`;
+    });
+    html+='</div>';
+  }
+  html+='</div>';
+  // recent list
+  if(d.recent&&d.recent.length){
+    html+='<div class="formreg-recent"><div class="formreg-sub">ลงทะเบียนล่าสุด</div><ul class="formreg-list">';
+    d.recent.forEach(r=>{html+=`<li><span class="formreg-name">${r.name}</span><span class="formreg-ts">${r.timestamp}</span></li>`;});
+    html+='</ul></div>';
+  }
+  wrap.innerHTML=html||'<span class="empty-msg">ยังไม่มีข้อมูล</span>';
+}
+
 // ── Milestone log ─────────────────────────────────────────────────────────────
 async function loadMilestoneLog(){
   if(!currentGuildId)return;
@@ -1440,7 +1488,7 @@ refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
 loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();
 loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();loadLogs();
 loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
-loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();
+loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();
 loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
@@ -1455,7 +1503,7 @@ _poll(loadDowHeatmap,300000);_poll(loadHistogram,120000);
 _poll(loadUserGrowth,300000);_poll(loadChannelDetails,120000);
 _poll(loadCoPresence,600000);_poll(loadMilestoneLog,300000);_poll(loadLiveVoice,10000);
 _poll(loadForecast,600000);_poll(loadCohortMatrix,600000);_poll(loadTimeOfDay,300000);
-_poll(loadChurnRisk,600000);_poll(loadRecords,300000);
+_poll(loadChurnRisk,600000);_poll(loadRecords,300000);_poll(loadFormRegistrations,300000);
 _poll(loadGuildHealth,300000);_poll(loadStreakBoard,300000);_poll(loadMarathon,300000);
 _poll(loadEngagementScore,300000);_poll(loadNewUserJourney,600000);_poll(loadPeakSummary,300000);
 // Resume immediately when tab becomes visible again
