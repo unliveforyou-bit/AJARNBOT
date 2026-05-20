@@ -8,7 +8,7 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 ![discord.py](https://img.shields.io/badge/discord.py-2.3+-5865F2?style=flat&logo=discord&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3.0+-000000?style=flat&logo=flask&logoColor=white)
 ![Railway](https://img.shields.io/badge/Deploy-Railway-0B0D0E?style=flat&logo=railway&logoColor=white)
-![Version](https://img.shields.io/badge/Version-3.2.0-58a6ff?style=flat)
+![Version](https://img.shields.io/badge/Version-3.4.0-58a6ff?style=flat)
 ![Tests](https://img.shields.io/badge/Tests-279%20passed-3fb950?style=flat)
 
 ---
@@ -54,7 +54,8 @@ Deploy บน [Railway](https://railway.app) — รันตลอด 24/7 ไ�
 - **Voice Activity Heatmap** — peak hour รายชั่วโมง 24h
 - **Session Histogram** — การกระจายความยาว session (0-5m, 5-15m, 15-30m, 30-60m, 60m+)
 - **Retention** — week-over-week retention chart
-- **Inactive Users** — รายชื่อสมาชิกที่ไม่ active 14+ วัน พร้อม badge ระดับ
+- **Inactive Users** — รายชื่อสมาชิกที่ไม่ active **7+ วัน** พร้อม badge ระดับ + ปุ่ม DM แจ้งเตือนสมาชิกโดยตรง
+- **Members Grid** — grid 5 คอลัมน์แสดงรูปโปรไฟล์ Discord ทุกคน: สีฟ้า = ใน voice, สีเขียว = online, สีเทา = offline (กดเข้าโปรไฟล์ได้)
 - **Channel Activity** — ranking channels ตามเวลาใช้งาน
 - **Session History** — ล่าสุด 200 รายการ พร้อม live search filter
 - **Member Profile** — หน้าโปรไฟล์ส่วนตัวพร้อม stat boxes, peak hour chart, channel breakdown
@@ -199,7 +200,8 @@ AJARNBOT/
 | `GET /api/wau-mau` | ✅ | Weekly Active Users (`?guild_id=X&weeks=N`) |
 | `GET /api/leaderboard` | ✅ | Leaderboard (`?guild_id=X&period=7d\|30d\|90d\|alltime&sort=time\|sessions\|streak\|days`) |
 | `GET /api/retention` | ✅ | Week-over-week retention (`?guild_id=X&weeks=N`) |
-| `GET /api/inactive` | ✅ | Inactive users (`?guild_id=X&days=N`) |
+| `GET /api/inactive` | ✅ | Inactive users (`?guild_id=X&days=N`, default 7) |
+| `GET /api/members` | ✅ | Member list with status, avatar, in_voice flag (`?guild_id=X`) |
 | `GET /api/dow-heatmap` | ✅ | 7×24 day-of-week × hour matrix |
 | `GET /api/histogram` | ✅ | Session length distribution (5 buckets) |
 | `GET /api/heatmap` | ✅ | Voice activity รายชั่วโมง 24h |
@@ -222,6 +224,7 @@ AJARNBOT/
 | `POST /api/votes/reset` | ✅ | รีเซ็ตคะแนน |
 | `GET /api/trivia-scores` | ✅ | คะแนน Trivia |
 | `GET /api/stats/<period>` | ✅ | Stats: today/week/month |
+| `POST /api/action/dm-user` | ✅ | ส่ง DM ถึงสมาชิกในกิลด์ (`uid`, `message`) |
 | `POST /api/action/joke` | ✅ | ส่งมุขทันที |
 | `POST /api/action/trivia` | ✅ | ส่ง Trivia ทันที |
 | `POST /api/action/rank` | ✅ | ส่ง leaderboard ทันที |
@@ -274,6 +277,38 @@ Python ถูกสร้างโดยใคร|Guido van Rossum
 ---
 
 ## 📋 Changelog
+
+### v3.4.0 — Members Grid, Avatar Persistence & Dashboard UX
+> `HEAD` · 2026-05-20
+
+**👥 Members Section**
+- Members grid ใหม่ 5 คอลัมน์ แสดงรูปโปรไฟล์ Discord ทุกคนใน guild
+- จุดสถานะ: 🔵 ใน voice · 🟢 online · 🟡 idle · 🔴 dnd · ⚫ offline (grayscale avatar)
+- เรียงลำดับ: voice → online → idle → dnd → offline ตามลำดับ, offline = รูปขาวดำ
+- คลิกแต่ละรูปเพื่อเข้าหน้าโปรไฟล์สมาชิก
+- Responsive: 5 คอลัมน์ → 3 คอลัมน์ → 2 คอลัมน์ บนมือถือ
+
+**🖼️ Avatar Persistence**
+- บันทึก `avatar_url` ใน `user_daily` ทุกครั้งที่ member เข้า voice channel
+- `on_ready` scan avatar ของทุก member ใน guild → cache ลง `user_daily` ทันที
+- ผลลัพธ์: รูปโปรไฟล์แสดงได้แม้สมาชิกจะออฟไลน์หรือไม่เคยเข้า Discord หลังติดตั้งบอท
+
+**😴 Inactive Users (7 วัน)**
+- เปลี่ยน threshold 14 → **7 วัน**
+- เพิ่มปุ่ม **DM** ต่อแถว — popup prompt ให้ระบุข้อความ แล้วส่ง Discord DM ถึงสมาชิกคนนั้นทันที
+- ใช้ endpoint `POST /api/action/dm-user` (bridge Flask → Discord async)
+
+**📈 User Growth Period Selector**
+- เพิ่ม period selector 7d / 14d / 30d แทนค่าเดิม 12 สัปดาห์ fixed
+- `/api/user-growth` รับ `?days=N` แปลงเป็น `num_weeks = ceil(days/7)` อัตโนมัติ
+
+**🐛 Bug Fix**
+- แก้ CSS cascade bug: `.card-icon.green { background: #16a34a }` override ทำให้ icon glyph หายไป (ทั้ง 7 section) — ลบ rule เดิมออก, ใช้ rule `rgba` แทน
+
+**⚙️ Intents**
+- เพิ่ม `intents.members = True` และ `intents.presences = True` (Privileged Gateway Intents) สำหรับ live status
+
+---
 
 ### v3.3.0 — Advanced Analytics (10 New Features)
 > `HEAD` · 2026-05-18
@@ -335,7 +370,7 @@ Guild Health · Streak Board · Marathon Sessions · Engagement Score · Peak Su
 
 | Endpoint | คำอธิบาย |
 |----------|----------|
-| `GET /api/user-growth` | New vs returning users per week (12w, EMA-cached 5m) |
+| `GET /api/user-growth` | New vs returning users per week (`?days=7\|14\|30`, EMA-cached 5m) |
 | `GET /api/channel-details` | Extended per-channel: unique_users, avg_min, peak_hour, top_user (cached 2m) |
 | `GET /api/copresence` | Top user pairs by voice session overlap — O(n²), capped 5000 sessions (cached 10m) |
 | `GET /api/milestone-log` | All milestone awards for a guild, sorted by hours desc |
@@ -628,6 +663,8 @@ Guild Health · Streak Board · Marathon Sessions · Engagement Score · Peak Su
 | DAU chart แสดง 0 ทั้งหมด | `daily_unique` ว่าง (ไม่มี historical data) | ✅ แก้แล้ว — backfill จาก `user_daily` (v2.8.0) |
 | Contrib graph วันเลื่อน 1 วัน | `toISOString()` ใช้ UTC ทำให้ UTC+7 เลื่อน | ✅ แก้แล้ว — local date components (v2.8.0) |
 | ข้อมูลหายทุก redeploy | ไฟล์ JSON อยู่ใน ephemeral filesystem | ✅ แก้แล้ว — Railway Volume mount `/data` (v2.8.0) |
+| Card icons แสดงเป็นสี่เหลี่ยมสีทึบ ไม่มี glyph | `.card-icon.green { background: #16a34a }` override กลบ color | ✅ แก้แล้ว — ลบ rule ออก (v3.4.0) |
+| รูปโปรไฟล์สมาชิกหายเมื่อออฟไลน์ | Discord.py evict member cache เมื่อ offline | ✅ แก้แล้ว — persist `avatar_url` ใน `user_daily` (v3.4.0) |
 
 ---
 
@@ -635,7 +672,7 @@ Guild Health · Streak Board · Marathon Sessions · Engagement Score · Peak Su
 
 ```bash
 python -m pytest tests/ -q
-# 93 passed
+# 279 passed
 ```
 
 Test coverage: config validation, anti-spam, Flask routes, data persistence, analytics endpoints
@@ -660,6 +697,6 @@ MIT License — ใช้ได้เสรี ดัดแปลงได้ �
 
 <div align="center">
 
-**AjarnBot v2.8.0** · Built with discord.py + Flask · Deployed on Railway
+**AjarnBot v3.4.0** · Built with discord.py + Flask · Deployed on Railway
 
 </div>
