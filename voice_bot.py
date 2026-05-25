@@ -39,6 +39,8 @@ _lock_event_counts    = threading.Lock()
 _lock_active_sessions = threading.Lock()
 _lock_spam            = threading.Lock()
 _lock_mute_cooldown   = threading.Lock()
+_lock_guild_points    = threading.Lock()
+_lock_gw_registered   = threading.Lock()
 # ================================
 
 THAI_TZ = ZoneInfo('Asia/Bangkok')
@@ -98,6 +100,8 @@ EVENT_COUNTS_FILE        = os.path.join(DATA_DIR, 'event_counts.json')
 ACTIVE_SESSIONS_FILE     = os.path.join(DATA_DIR, 'active_voice_sessions.json')
 DAILY_FILE           = os.path.join(DATA_DIR, 'daily_activity.json')
 USER_DAILY_FILE      = os.path.join(DATA_DIR, 'user_daily.json')
+GUILD_POINTS_FILE    = os.path.join(DATA_DIR, 'guild_points.json')
+GW_REGISTERED_FILE   = os.path.join(DATA_DIR, 'gw_registered.json')
 MILESTONES_FILE      = os.path.join(DATA_DIR, 'milestones.json')
 CHANNEL_ACTIVITY_FILE = os.path.join(DATA_DIR, 'channel_activity.json')
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -443,6 +447,8 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
         if uid_str not in daily_unique[gid][date_str]:
             daily_unique[gid][date_str].append(uid_str)
             _atomic_json_dump(daily_unique, DAILY_UNIQUE_FILE, ensure_ascii=False)
+    # Guild points
+    _award_points(guild_id, member_id, display_name)
     save_active_sessions()   # ← persist immediately so restart restores correctly
 
 def record_leave(guild_id, member_id) -> list:
@@ -689,6 +695,72 @@ def load_daily_unique():
 def save_daily_unique():
     with _lock_daily_unique:
         _atomic_json_dump(daily_unique, DAILY_UNIQUE_FILE, ensure_ascii=False)
+
+# ===== Guild Points =====
+# guild_points[guild_id][uid][date_str] = {'gw': int, 'other': int, 'reg': int, 'name': str}
+# gw   = 20 pts (GW voice session on Sat/Sun 19:30-21:00, once per day)
+# other = 5 pts (other voice session, once per day)
+# reg  = 10 pts (GW registered, once per day — daily reward)
+guild_points   = {}   # {guild_id: {uid: {date_str: {gw, other, reg, name}}}}
+gw_registered  = {}   # {guild_id: [uid_str, ...]}
+
+def load_guild_points():
+    global guild_points
+    if os.path.exists(GUILD_POINTS_FILE):
+        try:
+            with open(GUILD_POINTS_FILE, encoding='utf-8') as f:
+                guild_points = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_guild_points failed: {e}')
+
+def save_guild_points():
+    with _lock_guild_points:
+        _atomic_json_dump(guild_points, GUILD_POINTS_FILE, ensure_ascii=False)
+
+def load_gw_registered():
+    global gw_registered
+    if os.path.exists(GW_REGISTERED_FILE):
+        try:
+            with open(GW_REGISTERED_FILE, encoding='utf-8') as f:
+                gw_registered = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_gw_registered failed: {e}')
+
+def save_gw_registered():
+    with _lock_gw_registered:
+        _atomic_json_dump(gw_registered, GW_REGISTERED_FILE, ensure_ascii=False)
+
+def _is_gw_time(dt: datetime) -> bool:
+    """True if dt is Saturday or Sunday between 19:30 and 21:00 (Thai time)."""
+    return dt.weekday() in (5, 6) and (19, 30) <= (dt.hour, dt.minute) < (21, 0)
+
+def _award_points(guild_id: int, member_id: int, display_name: str) -> None:
+    """Award daily points on voice join. Safe to call multiple times per day (idempotent per category)."""
+    gid = str(guild_id)
+    uid = str(member_id)
+    now = datetime.now(THAI_TZ)
+    date_str = now.strftime('%Y-%m-%d')
+    with _lock_guild_points:
+        if gid not in guild_points:
+            guild_points[gid] = {}
+        if uid not in guild_points[gid]:
+            guild_points[gid][uid] = {}
+        day = guild_points[gid][uid].setdefault(date_str, {'gw': 0, 'other': 0, 'reg': 0, 'name': display_name})
+        day['name'] = display_name  # keep fresh
+        changed = False
+        if _is_gw_time(now) and day['gw'] == 0:
+            day['gw'] = 20
+            changed = True
+        elif not _is_gw_time(now) and day['other'] == 0:
+            day['other'] = 5
+            changed = True
+        # Registration bonus — awarded once per day if uid is in gw_registered
+        if uid in gw_registered.get(gid, []) and day['reg'] == 0:
+            day['reg'] = 10
+            changed = True
+        if changed:
+            _atomic_json_dump(guild_points, GUILD_POINTS_FILE, ensure_ascii=False)
+# ========================
 
 # ===== Milestones (Feature 5) =====
 # milestones_awarded[guild_id][uid] = [hours_int, ...]  — milestones already announced
@@ -1140,6 +1212,8 @@ async def on_ready():
     load_daily_unique()
     load_milestones()
     load_channel_activity()
+    load_guild_points()
+    load_gw_registered()
     load_event_counts()   # ← restore persisted event counters
     log(f'Bot ready: {client.user}')
     log(f'DATA_DIR: {DATA_DIR} ({"persistent volume" if os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") else "⚠️ ephemeral — data will be lost on redeploy!"})')
@@ -3291,6 +3365,108 @@ def api_form_registrations():
         'recent':   recent,
         'error':    err,
     })
+
+
+# ── Guild Points ─────────────────────────────────────────────────────────────
+
+@flask_app.route('/api/points')
+@require_auth
+def api_points():
+    """
+    Aggregate guild points for a period.
+    ?guild_id=X&period=week|month|all   (default: week)
+    Returns [{uid, name, gw_pts, other_pts, reg_pts, total, rank}] sorted by total desc.
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid    = str(guild_id)
+    period = request.args.get('period', 'week')
+    now    = datetime.now(THAI_TZ)
+
+    if period == 'week':
+        # Monday–Sunday of current week
+        monday    = now - timedelta(days=now.weekday())
+        date_from = monday.date()
+        date_to   = (monday + timedelta(days=6)).date()
+    elif period == 'month':
+        date_from = now.date().replace(day=1)
+        # last day of month
+        if now.month == 12:
+            date_to = now.date().replace(day=31)
+        else:
+            date_to = (now.date().replace(month=now.month + 1, day=1) - timedelta(days=1))
+    else:  # 'all'
+        date_from = None
+        date_to   = None
+
+    with _lock_guild_points:
+        users_data = guild_points.get(gid, {})
+
+    rows = []
+    for uid, day_map in users_data.items():
+        gw_pts = other_pts = reg_pts = 0
+        latest_name = ''
+        for date_str, vals in day_map.items():
+            if date_from is not None:
+                try:
+                    d = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    if not (date_from <= d <= date_to):
+                        continue
+                except ValueError:
+                    continue
+            gw_pts    += vals.get('gw', 0)
+            other_pts += vals.get('other', 0)
+            reg_pts   += vals.get('reg', 0)
+            latest_name = vals.get('name', latest_name)
+        total = gw_pts + other_pts + reg_pts
+        if total > 0:
+            rows.append({'uid': uid, 'name': latest_name,
+                         'gw_pts': gw_pts, 'other_pts': other_pts, 'reg_pts': reg_pts,
+                         'total': total})
+
+    rows.sort(key=lambda r: -r['total'])
+    for i, r in enumerate(rows, 1):
+        r['rank'] = i
+
+    return jsonify({'ok': True, 'period': period, 'rows': rows})
+
+
+@flask_app.route('/api/points/registered', methods=['GET', 'POST', 'DELETE'])
+@require_auth
+def api_points_registered():
+    """
+    GET  ?guild_id=X          → list of registered uid strings
+    POST {guild_id, uid}       → add uid to gw_registered
+    DELETE {guild_id, uid}     → remove uid from gw_registered
+    """
+    if request.method == 'GET':
+        guild_id, err = _guild_id_or_error()
+        if err:
+            return err
+        gid = str(guild_id)
+        with _lock_gw_registered:
+            reg = list(gw_registered.get(gid, []))
+        return jsonify({'ok': True, 'registered': reg})
+
+    data = request.get_json(silent=True) or {}
+    gid  = str(data.get('guild_id', ''))
+    uid  = str(data.get('uid', '')).strip()
+    if not gid or not uid:
+        return jsonify({'ok': False, 'error': 'guild_id and uid required'}), 400
+
+    with _lock_gw_registered:
+        lst = gw_registered.setdefault(gid, [])
+        if request.method == 'POST':
+            if uid not in lst:
+                lst.append(uid)
+            _atomic_json_dump(gw_registered, GW_REGISTERED_FILE, ensure_ascii=False)
+            return jsonify({'ok': True, 'action': 'added', 'uid': uid})
+        else:  # DELETE
+            if uid in lst:
+                lst.remove(uid)
+            _atomic_json_dump(gw_registered, GW_REGISTERED_FILE, ensure_ascii=False)
+            return jsonify({'ok': True, 'action': 'removed', 'uid': uid})
 
 
 # ── Notion Integration ───────────────────────────────────────────────────────

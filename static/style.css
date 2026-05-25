@@ -1505,3 +1505,36 @@ html.js .card.entered:hover { transform:translateY(-2px); }
   padding:.15rem .55rem;
   border-radius:99px;
 }
+
+/* ── Guild Points Board ─────────────────────────────────────────────────── */
+.points-legend{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:.75rem;}
+.pts-badge{font-size:.75rem;padding:.2rem .55rem;border-radius:99px;font-weight:600;}
+.gw-badge{background:rgba(234,179,8,.18);color:#ca8a04;}
+.other-badge{background:rgba(99,102,241,.18);color:#818cf8;}
+.reg-badge{background:rgba(34,197,94,.18);color:#16a34a;}
+.pts-table-wrap{overflow-x:auto;}
+.pts-table{width:100%;border-collapse:collapse;font-size:.82rem;}
+.pts-table thead th{
+  text-align:left;
+  padding:.4rem .6rem;
+  font-size:.72rem;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  color:var(--muted);
+  border-bottom:1px solid var(--border,rgba(255,255,255,.08));
+  white-space:nowrap;
+}
+.pts-table thead th:not(:nth-child(2)){text-align:center;}
+.pts-row{border-bottom:1px solid var(--border,rgba(255,255,255,.05));transition:background .15s;}
+.pts-row:hover{background:rgba(255,255,255,.04);}
+.pts-rank{width:2.2rem;padding:.45rem .6rem;text-align:center;font-weight:700;font-size:.9rem;}
+.pts-name{padding:.45rem .6rem;font-weight:500;color:var(--fg);}
+.pts-cell{text-align:center;padding:.45rem .4rem;color:var(--muted);font-size:.8rem;}
+.pts-cell.gw{color:#ca8a04;}
+.pts-cell.other{color:#818cf8;}
+.pts-cell.reg{color:#16a34a;}
+.pts-total{padding:.45rem .6rem;min-width:120px;}
+.pts-bar-wrap{position:relative;height:18px;background:var(--surface2,rgba(255,255,255,.06));border-radius:4px;overflow:hidden;}
+.pts-bar{position:absolute;top:0;left:0;height:100%;background:var(--accent,#6366f1);border-radius:4px;transition:width .4s ease;}
+.pts-bar-label{position:absolute;right:.35rem;top:50%;transform:translateY(-50%);font-size:.72rem;font-weight:700;color:#fff;z-index:1;}

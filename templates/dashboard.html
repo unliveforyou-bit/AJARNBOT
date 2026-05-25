@@ -53,6 +53,7 @@
       <li><a href="#ct-copresence-section"><i class="ph-bold ph-handshake" aria-hidden="true"></i> Voice Buddies</a></li>
       <li><a href="#ct-milestone-section"><i class="ph-bold ph-crown" aria-hidden="true"></i> Hall of Fame</a></li>
       <li><a href="#ct-formreg-section"><i class="ph-bold ph-clipboard-text" aria-hidden="true"></i> ลงทะเบียน GW</a></li>
+      <li><a href="#ct-points-section"><i class="ph-bold ph-star" aria-hidden="true"></i> คะแนนกิล</a></li>
       <li><a href="#ct-forecast-section"><i class="ph-bold ph-chart-line" aria-hidden="true"></i> DAU Forecast</a></li>
       <li><a href="#ct-tod-section"><i class="ph-bold ph-clock" aria-hidden="true"></i> Time of Day</a></li>
       <li><a href="#ct-churn-section"><i class="ph-bold ph-warning-circle" aria-hidden="true"></i> Churn Risk</a></li>
@@ -564,6 +565,27 @@
       </div>
       <div class="card-body" id="formRegWrap">
         <span class="empty-msg">กำลังโหลด...</span>
+      </div>
+    </section>
+
+    <!-- Guild Points -->
+    <section class="card" id="ct-points-section" aria-labelledby="ct-points">
+      <div class="card-header">
+        <div class="card-icon" style="background:#f59e0b" aria-hidden="true"><i class="ph-bold ph-star"></i></div>
+        <h2 class="card-title" id="ct-points">คะแนนกิล</h2>
+        <div class="period-btns" id="pointsPeriodBtns" role="group" aria-label="เลือกช่วงเวลา" style="margin-left:auto">
+          <button class="period-btn active" data-period="week" onclick="loadPointsBoard('week')">สัปดาห์นี้</button>
+          <button class="period-btn" data-period="month" onclick="loadPointsBoard('month')">เดือนนี้</button>
+          <button class="period-btn" data-period="all" onclick="loadPointsBoard('all')">ทั้งหมด</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="points-legend">
+          <span class="pts-badge gw-badge">🛡️ GW +20</span>
+          <span class="pts-badge other-badge">🎙️ อื่นๆ +5</span>
+          <span class="pts-badge reg-badge">📋 ลงทะเบียน +10</span>
+        </div>
+        <div id="pointsWrap"><span class="empty-msg">กำลังโหลด...</span></div>
       </div>
     </section>
 

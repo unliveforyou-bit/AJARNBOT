@@ -223,7 +223,7 @@ async function switchGuild(guildId){
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
     loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();
     loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
-    loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();
+    loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();loadPointsBoard();
     loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
@@ -1084,6 +1084,58 @@ async function loadFormRegistrations(){
   wrap.innerHTML=html||'<span class="empty-msg">ยังไม่มีข้อมูล</span>';
 }
 
+// ── Guild Points Board ────────────────────────────────────────────────────────
+let _ptsPeriod = 'week';
+async function loadPointsBoard(period){
+  if(period) _ptsPeriod = period;
+  const wrap = document.getElementById('pointsWrap');
+  if(!wrap) return;
+  // update active button
+  document.querySelectorAll('#pointsPeriodBtns .period-btn').forEach(b=>{
+    b.classList.toggle('active', b.dataset.period === _ptsPeriod);
+  });
+  wrap.innerHTML = '<span class="empty-msg">กำลังโหลด...</span>';
+  let d;
+  try {
+    const r = await fetch(`/api/points?period=${_ptsPeriod}`);
+    if(!r.ok) throw new Error(r.status);
+    d = await r.json();
+  } catch(e) {
+    wrap.innerHTML = '<span class="empty-msg">โหลดไม่สำเร็จ</span>'; return;
+  }
+  if(!d || !d.ok || !d.rows || !d.rows.length) {
+    wrap.innerHTML = '<span class="empty-msg">ยังไม่มีข้อมูลคะแนน</span>'; return;
+  }
+  const rows = d.rows;
+  let html = '<div class="pts-table-wrap"><table class="pts-table"><thead><tr>'
+    + '<th>#</th><th>ชื่อ</th>'
+    + '<th title="GW session (เสาร์-อาทิตย์ 19:30-21:00)">🛡️ GW</th>'
+    + '<th title="เข้าเสียงช่วงอื่น">🎙️ อื่นๆ</th>'
+    + '<th title="ลงทะเบียน GW">📋 ลงทะเบียน</th>'
+    + '<th>รวม</th>'
+    + '</tr></thead><tbody>';
+  const maxTotal = rows[0].total || 1;
+  rows.forEach(r => {
+    const medal = r.rank === 1 ? '🥇' : r.rank === 2 ? '🥈' : r.rank === 3 ? '🥉' : r.rank;
+    const barPct = Math.round(r.total / maxTotal * 100);
+    html += `<tr class="pts-row" data-uid="${r.uid}">
+      <td class="pts-rank">${medal}</td>
+      <td class="pts-name">${r.name}</td>
+      <td class="pts-cell gw">${r.gw_pts > 0 ? r.gw_pts : '-'}</td>
+      <td class="pts-cell other">${r.other_pts > 0 ? r.other_pts : '-'}</td>
+      <td class="pts-cell reg">${r.reg_pts > 0 ? r.reg_pts : '-'}</td>
+      <td class="pts-total">
+        <div class="pts-bar-wrap">
+          <div class="pts-bar" style="width:${barPct}%"></div>
+          <span class="pts-bar-label">${r.total}</span>
+        </div>
+      </td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  wrap.innerHTML = html;
+}
+
 // ── Milestone log ─────────────────────────────────────────────────────────────
 async function loadMilestoneLog(){
   if(!currentGuildId)return;
@@ -1488,7 +1540,7 @@ refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
 loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();
 loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();loadLogs();
 loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
-loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();
+loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();loadPointsBoard();
 loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
@@ -1503,7 +1555,7 @@ _poll(loadDowHeatmap,300000);_poll(loadHistogram,120000);
 _poll(loadUserGrowth,300000);_poll(loadChannelDetails,120000);
 _poll(loadCoPresence,600000);_poll(loadMilestoneLog,300000);_poll(loadLiveVoice,10000);
 _poll(loadForecast,600000);_poll(loadCohortMatrix,600000);_poll(loadTimeOfDay,300000);
-_poll(loadChurnRisk,600000);_poll(loadRecords,300000);_poll(loadFormRegistrations,300000);
+_poll(loadChurnRisk,600000);_poll(loadRecords,300000);_poll(loadFormRegistrations,300000);_poll(()=>loadPointsBoard(),300000);
 _poll(loadGuildHealth,300000);_poll(loadStreakBoard,300000);_poll(loadMarathon,300000);
 _poll(loadEngagementScore,300000);_poll(loadNewUserJourney,600000);_poll(loadPeakSummary,300000);
 // Resume immediately when tab becomes visible again
