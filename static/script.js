@@ -223,7 +223,7 @@ async function switchGuild(guildId){
     loadChannelActivity();loadDAU();loadLeaderboard(_lbPeriod);loadInactive();loadRetention();
     loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();
     loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
-    loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();loadPointsBoard();
+    loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();loadPointsBoard();loadNewMembers();
     loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
     showToast('เปลี่ยนเป็น '+document.getElementById('guildSwitcher').selectedOptions[0].text);
   }catch(e){showToast('เปลี่ยน Server ไม่ได้',true);}
@@ -1136,6 +1136,59 @@ async function loadPointsBoard(period){
   wrap.innerHTML = html;
 }
 
+// ── New Member Journey ────────────────────────────────────────────────────────
+async function loadNewMembers(){
+  const wrap  = document.getElementById('newMembersWrap');
+  const badge = document.getElementById('newMemberCount');
+  if(!wrap) return;
+  let d;
+  try {
+    const r = await fetch('/api/new-members?days=30');
+    if(!r.ok) throw new Error(r.status);
+    d = await r.json();
+  } catch(e) { wrap.innerHTML='<span class="empty-msg">โหลดไม่สำเร็จ</span>'; return; }
+  const members = d.members || [];
+  if(badge) badge.textContent = members.length + ' คน';
+  if(!members.length){ wrap.innerHTML='<span class="empty-msg">ยังไม่มีสมาชิกใหม่</span>'; return; }
+
+  const chk = (v) => v
+    ? '<span class="nm-chk nm-chk--ok">✓</span>'
+    : '<span class="nm-chk nm-chk--no">✗</span>';
+
+  let html = '<div class="nm-table-wrap"><table class="nm-table"><thead><tr>'
+    + '<th>ชื่อ</th><th title="เข้า Discord">🎙️</th>'
+    + '<th title="เข้า Voice ครั้งแรก">🔊</th>'
+    + '<th title="ลงทะเบียน GW">📋</th>'
+    + '<th title="ครบ 3 วัน">3d</th>'
+    + '<th title="Buddy">👥</th>'
+    + '<th>คะแนน</th><th>วัน</th>'
+    + '</tr></thead><tbody>';
+
+  members.forEach(m => {
+    const rowCls = m.is_probation ? ' nm-probation' : '';
+    const buddy  = m.buddy ? `<span class="nm-buddy" title="พี่เลี้ยง: ${m.buddy.mentor_name}">✓</span>` : '-';
+    html += `<tr class="nm-row${rowCls}">
+      <td class="nm-name">${m.name}${m.is_probation ? ' ⚠️' : ''}</td>
+      <td>${chk(m.welcome_sent)}</td>
+      <td>${chk(m.first_voice)}</td>
+      <td>${chk(m.first_gw_reg)}</td>
+      <td>${chk(m.milestone_3d)}</td>
+      <td>${buddy}</td>
+      <td class="nm-pts">${m.total_points}</td>
+      <td class="nm-days">${m.days_since}d</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+
+  // Probation alerts
+  const probation = members.filter(m => m.is_probation);
+  if(probation.length) {
+    html += `<div class="nm-alert">⚠️ <strong>Probation ${probation.length} คน</strong> — ยังไม่มีคะแนนเลย ควรทัก DM: `
+      + probation.map(m => m.name).join(', ') + '</div>';
+  }
+  wrap.innerHTML = html;
+}
+
 // ── Milestone log ─────────────────────────────────────────────────────────────
 async function loadMilestoneLog(){
   if(!currentGuildId)return;
@@ -1540,7 +1593,7 @@ refreshStatus();loadHeatmap();loadContribGraph();loadHistory();loadVotes();
 loadChannelActivity();loadDAU();loadLeaderboard('7d');loadInactive();loadRetention();
 loadDowHeatmap();loadHistogram();loadMembers();loadNotionStatus();loadLogs();
 loadUserGrowth();loadChannelDetails();loadCoPresence();loadMilestoneLog();loadLiveVoice();
-loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();loadPointsBoard();
+loadForecast();loadCohortMatrix();loadTimeOfDay();loadChurnRisk();loadRecords();loadFormRegistrations();loadPointsBoard();loadNewMembers();
 loadGuildHealth();loadStreakBoard();loadMarathon();loadEngagementScore();loadNewUserJourney();loadPeakSummary();
 // Note: loadGuilds() is called inside loadConfig() after isOwner is known
 updateClock();setInterval(updateClock,1000);
@@ -1555,7 +1608,8 @@ _poll(loadDowHeatmap,300000);_poll(loadHistogram,120000);
 _poll(loadUserGrowth,300000);_poll(loadChannelDetails,120000);
 _poll(loadCoPresence,600000);_poll(loadMilestoneLog,300000);_poll(loadLiveVoice,10000);
 _poll(loadForecast,600000);_poll(loadCohortMatrix,600000);_poll(loadTimeOfDay,300000);
-_poll(loadChurnRisk,600000);_poll(loadRecords,300000);_poll(loadFormRegistrations,300000);_poll(()=>loadPointsBoard(),300000);
+_poll(loadChurnRisk,600000);_poll(loadRecords,300000);_poll(loadFormRegistrations,300000);
+_poll(()=>loadPointsBoard(),300000);_poll(loadNewMembers,300000);
 _poll(loadGuildHealth,300000);_poll(loadStreakBoard,300000);_poll(loadMarathon,300000);
 _poll(loadEngagementScore,300000);_poll(loadNewUserJourney,600000);_poll(loadPeakSummary,300000);
 // Resume immediately when tab becomes visible again

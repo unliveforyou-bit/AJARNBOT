@@ -1538,3 +1538,43 @@ html.js .card.entered:hover { transform:translateY(-2px); }
 .pts-bar-wrap{position:relative;height:18px;background:var(--surface2,rgba(255,255,255,.06));border-radius:4px;overflow:hidden;}
 .pts-bar{position:absolute;top:0;left:0;height:100%;background:var(--accent,#6366f1);border-radius:4px;transition:width .4s ease;}
 .pts-bar-label{position:absolute;right:.35rem;top:50%;transform:translateY(-50%);font-size:.72rem;font-weight:700;color:#fff;z-index:1;}
+
+/* ── New Member Journey ──────────────────────────────────────────────────── */
+.nm-legend{display:flex;align-items:center;gap:.5rem;font-size:.75rem;color:var(--muted);margin-bottom:.6rem;}
+.nm-dot{display:inline-block;width:8px;height:8px;border-radius:50%;}
+.nm-dot--ok{background:#22c55e;}
+.nm-dot--warn{background:#f59e0b;}
+.nm-dot--danger{background:#ef4444;}
+.nm-table-wrap{overflow-x:auto;}
+.nm-table{width:100%;border-collapse:collapse;font-size:.8rem;}
+.nm-table thead th{
+  padding:.35rem .5rem;
+  text-align:center;
+  font-size:.7rem;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  color:var(--muted);
+  border-bottom:1px solid var(--border,rgba(255,255,255,.08));
+}
+.nm-table thead th:first-child{text-align:left;}
+.nm-row{border-bottom:1px solid var(--border,rgba(255,255,255,.04));transition:background .15s;}
+.nm-row:hover{background:rgba(255,255,255,.04);}
+.nm-probation td{background:rgba(239,68,68,.06);}
+.nm-probation .nm-name{color:#f87171;}
+.nm-name{padding:.4rem .5rem;font-weight:500;}
+.nm-pts,.nm-days{text-align:center;padding:.4rem .4rem;color:var(--muted);font-size:.78rem;}
+.nm-pts{color:var(--accent,#6366f1);font-weight:600;}
+.nm-chk{font-size:.8rem;display:flex;justify-content:center;}
+.nm-chk--ok{color:#22c55e;}
+.nm-chk--no{color:rgba(255,255,255,.2);}
+.nm-buddy{color:#22c55e;cursor:default;}
+.nm-alert{
+  margin-top:.75rem;
+  padding:.55rem .75rem;
+  background:rgba(239,68,68,.12);
+  border:1px solid rgba(239,68,68,.3);
+  border-radius:8px;
+  font-size:.8rem;
+  color:#f87171;
+}

@@ -41,6 +41,8 @@ _lock_spam            = threading.Lock()
 _lock_mute_cooldown   = threading.Lock()
 _lock_guild_points    = threading.Lock()
 _lock_gw_registered   = threading.Lock()
+_lock_buddy_pairs     = threading.Lock()
+_lock_new_members     = threading.Lock()
 # ================================
 
 THAI_TZ = ZoneInfo('Asia/Bangkok')
@@ -65,6 +67,9 @@ GOOGLE_CREDENTIALS        = os.environ.get('GOOGLE_CREDENTIALS', '')  # service-
 FORM_SHEET_ID             = os.environ.get('FORM_SHEET_ID', '1Vjz2MhuUnQOhna79EtWJhwvLOg8TebZb27RccSlQcbE')
 NOTION_TOKEN       = os.environ.get('NOTION_TOKEN', '')        # Notion Integration token
 NOTION_DATABASE_ID = os.environ.get('NOTION_DATABASE_ID', '')  # Notion Database ID
+GW_REGISTER_LINK   = os.environ.get('GW_REGISTER_LINK', '')    # Google Form link for GW registration
+GUILD_RULES_LINK   = os.environ.get('GUILD_RULES_LINK', '')    # Link to guild rules doc
+PROBATION_DAYS     = int(os.environ.get('PROBATION_DAYS', '14'))  # Days to check probation
 
 # ===== Startup config validation =====
 _FLASK_SECRET_RAW = os.environ.get('FLASK_SECRET', '')
@@ -102,6 +107,8 @@ DAILY_FILE           = os.path.join(DATA_DIR, 'daily_activity.json')
 USER_DAILY_FILE      = os.path.join(DATA_DIR, 'user_daily.json')
 GUILD_POINTS_FILE    = os.path.join(DATA_DIR, 'guild_points.json')
 GW_REGISTERED_FILE   = os.path.join(DATA_DIR, 'gw_registered.json')
+BUDDY_PAIRS_FILE     = os.path.join(DATA_DIR, 'buddy_pairs.json')
+NEW_MEMBER_FILE      = os.path.join(DATA_DIR, 'new_members.json')
 MILESTONES_FILE      = os.path.join(DATA_DIR, 'milestones.json')
 CHANNEL_ACTIVITY_FILE = os.path.join(DATA_DIR, 'channel_activity.json')
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -449,6 +456,18 @@ def record_join(guild_id, member_id, display_name, channel_name=''):
             _atomic_json_dump(daily_unique, DAILY_UNIQUE_FILE, ensure_ascii=False)
     # Guild points
     _award_points(guild_id, member_id, display_name)
+    # New member: first voice milestone
+    nm_entry = new_members.get(gid, {}).get(uid_str)
+    if nm_entry and not nm_entry.get('first_voice'):
+        with _lock_new_members:
+            new_members.setdefault(gid, {}).setdefault(uid_str, {})['first_voice'] = True
+            save_new_members()
+        # fire-and-forget coroutine on bot loop
+        if bot_loop and not bot_loop.is_closed():
+            asyncio.run_coroutine_threadsafe(
+                _check_new_member_milestone(gid, uid_str, display_name, 'first_voice'),
+                bot_loop
+            )
     save_active_sessions()   # ← persist immediately so restart restores correctly
 
 def record_leave(guild_id, member_id) -> list:
@@ -729,6 +748,57 @@ def load_gw_registered():
 def save_gw_registered():
     with _lock_gw_registered:
         _atomic_json_dump(gw_registered, GW_REGISTERED_FILE, ensure_ascii=False)
+
+# ===== Buddy System =====
+# buddy_pairs[guild_id][new_uid] = {'mentor_uid': str, 'mentor_name': str, 'new_name': str, 'since': ISO}
+buddy_pairs = {}
+
+def load_buddy_pairs():
+    global buddy_pairs
+    if os.path.exists(BUDDY_PAIRS_FILE):
+        try:
+            with open(BUDDY_PAIRS_FILE, encoding='utf-8') as f:
+                buddy_pairs = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_buddy_pairs failed: {e}')
+
+def save_buddy_pairs():
+    with _lock_buddy_pairs:
+        _atomic_json_dump(buddy_pairs, BUDDY_PAIRS_FILE, ensure_ascii=False)
+
+# ===== New Member Tracking =====
+# new_members[guild_id][uid] = {'name': str, 'joined_at': ISO,
+#   'welcome_sent': bool, 'first_voice': bool, 'first_gw_reg': bool,
+#   'milestone_3d': bool, 'probation_warned': bool}
+new_members = {}
+
+def load_new_members():
+    global new_members
+    if os.path.exists(NEW_MEMBER_FILE):
+        try:
+            with open(NEW_MEMBER_FILE, encoding='utf-8') as f:
+                new_members = json.load(f)
+        except Exception as e:
+            print(f'[WARN] load_new_members failed: {e}')
+
+def save_new_members():
+    with _lock_new_members:
+        _atomic_json_dump(new_members, NEW_MEMBER_FILE, ensure_ascii=False)
+
+def _get_new_member_entry(gid: str, uid: str) -> dict | None:
+    """Return new member entry if member joined ≤ 30 days ago, else None."""
+    return new_members.get(gid, {}).get(uid)
+
+def _is_new_member(gid: str, uid: str, days: int = 30) -> bool:
+    entry = _get_new_member_entry(gid, uid)
+    if not entry:
+        return False
+    try:
+        joined = datetime.fromisoformat(entry['joined_at'])
+        return (datetime.now(THAI_TZ) - joined).days <= days
+    except Exception:
+        return False
+# ================================
 
 def _is_gw_time(dt: datetime) -> bool:
     """True if dt is Saturday or Sunday between 19:30 and 21:00 (Thai time)."""
@@ -1214,6 +1284,8 @@ async def on_ready():
     load_channel_activity()
     load_guild_points()
     load_gw_registered()
+    load_buddy_pairs()
+    load_new_members()
     load_event_counts()   # ← restore persisted event counters
     log(f'Bot ready: {client.user}')
     log(f'DATA_DIR: {DATA_DIR} ({"persistent volume" if os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") else "⚠️ ephemeral — data will be lost on redeploy!"})')
@@ -1255,6 +1327,8 @@ async def on_ready():
     rotate_status.start()
     save_event_counts_task.start()   # ← save event_counts every 5 min
     evict_stale_trackers.start()     # ← evict stale rate-limit dicts every 10 min
+    member_management_task.start()   # ← probation + milestone checks + GW reminder
+    weekly_leaderboard_ping.start()  # ← Monday leaderboard to stats channel
     await client.tree.sync()
     # ── Ready message ──────────────────────────────────────────────────────────
     for guild in client.guilds:
@@ -1268,6 +1342,256 @@ async def on_ready():
                     )
                 except Exception:
                     pass
+
+# ── Member management helpers ──────────────────────────────────────────────────
+
+async def _send_welcome_dm(member: discord.Member):
+    """Send welcome DM to new member with GW registration link and guild rules."""
+    gid = str(member.guild.id)
+    uid = str(member.id)
+    parts = [
+        f'👋 **ยินดีต้อนรับสู่กิล {member.guild.name}!**\n',
+        'เพื่อให้ได้รับสิทธิ์เต็มในกิลโปรดทำตามขั้นตอนดังนี้:\n',
+        '**1.** เข้า Discord ให้บ่อยๆ เพื่อสะสมคะแนนกิล',
+        '**2.** เข้าร่วม Guild War ทุกเสาร์-อาทิตย์ เวลา 19:30-21:00',
+    ]
+    if GW_REGISTER_LINK:
+        parts.append(f'**3.** ลงทะเบียน GW: {GW_REGISTER_LINK}')
+    if GUILD_RULES_LINK:
+        parts.append(f'**4.** อ่านกฎกิล: {GUILD_RULES_LINK}')
+    parts.append('\nหากมีคำถามสามารถถามใน server ได้เลย 🙂')
+    msg = '\n'.join(parts)
+    try:
+        await member.send(msg)
+        with _lock_new_members:
+            new_members.setdefault(gid, {}).setdefault(uid, {})['welcome_sent'] = True
+            save_new_members()
+        log(f'Welcome DM sent → {member.display_name} ({uid})')
+    except discord.Forbidden:
+        log(f'Welcome DM failed (DMs disabled) → {member.display_name} ({uid})')
+    except Exception as e:
+        log(f'Welcome DM error → {member.display_name}: {e}')
+
+
+async def _check_new_member_milestone(gid: str, uid: str, name: str, milestone: str):
+    """Announce milestone achievement for new member in stats channel."""
+    msgs = {
+        'first_voice': f'🎙️ **{name}** เพิ่งเข้า Voice ครั้งแรก! ยินดีต้อนรับสู่กิล 🎉',
+        'first_gw_reg': f'📋 **{name}** ลงทะเบียน Guild War แล้ว! ขอบคุณที่ร่วมทีม 💪',
+        'milestone_3d': f'✅ **{name}** เข้า Discord ครบ 3 วันแรก — เริ่มต้นได้ดีมาก! 🌟',
+    }
+    text = msgs.get(milestone)
+    if not text:
+        return
+    for guild in client.guilds:
+        if str(guild.id) == gid:
+            ch = get_guild_ch(guild.id, 'stats')
+            if ch:
+                try:
+                    await ch.send(text)
+                except Exception:
+                    pass
+            break
+
+
+async def _send_inactivity_dm(member: discord.Member, days_inactive: int):
+    """DM a member who has been inactive for too long."""
+    gw_link = f'\nลงทะเบียน GW: {GW_REGISTER_LINK}' if GW_REGISTER_LINK else ''
+    msg = (
+        f'👀 สวัสดี **{member.display_name}**!\n\n'
+        f'เราสังเกตว่าไม่ได้เห็นคุณใน Discord มา **{days_inactive} วัน** แล้ว\n'
+        f'กิล **{member.guild.name}** ยังรอคุณอยู่นะ — เข้ามาเล่นด้วยกันเมื่อพร้อมได้เลย 😊'
+        f'{gw_link}'
+    )
+    try:
+        await member.send(msg)
+        log(f'Inactivity DM sent → {member.display_name} ({member.id}), inactive {days_inactive}d')
+    except Exception:
+        pass
+
+
+@client.event
+async def on_member_join(member: discord.Member):
+    """Track new member, send welcome DM."""
+    if member.bot:
+        return
+    gid = str(member.guild.id)
+    uid = str(member.id)
+    now_iso = datetime.now(THAI_TZ).isoformat()
+    with _lock_new_members:
+        new_members.setdefault(gid, {})[uid] = {
+            'name': member.display_name,
+            'joined_at': now_iso,
+            'welcome_sent': False,
+            'first_voice': False,
+            'first_gw_reg': False,
+            'milestone_3d': False,
+            'probation_warned': False,
+            'inactivity_dm_sent': False,
+        }
+        save_new_members()
+    # Announce in stats channel
+    ch = get_guild_ch(member.guild.id, 'stats')
+    if ch:
+        try:
+            await ch.send(f'👋 **{member.display_name}** เข้าร่วมกิลแล้ว! ยินดีต้อนรับ 🎉')
+        except Exception:
+            pass
+    # Send welcome DM
+    await _send_welcome_dm(member)
+    log(f'on_member_join: {member.display_name} ({uid}) in {member.guild.name}')
+
+
+# ── Scheduled: member management (probation, milestones, GW reminder) ──────────
+@tasks.loop(hours=1)
+async def member_management_task():
+    now = datetime.now(THAI_TZ)
+
+    # ── GW Reminder: เสาร์-อาทิตย์ เวลา 19:00 ──
+    if now.weekday() in (5, 6) and now.hour == 19 and now.minute < 60:
+        for guild in client.guilds:
+            gid = str(guild.id)
+            if not get_gc(guild.id, 'gw_reminder', True):
+                continue
+            ch = get_guild_ch(guild.id, 'stats')
+            if ch:
+                reg_count = len(gw_registered.get(gid, []))
+                gw_link = f'\n📋 ลงทะเบียน: {GW_REGISTER_LINK}' if GW_REGISTER_LINK else ''
+                try:
+                    await ch.send(
+                        f'⚔️ **Guild War เริ่มในอีก 30 นาที!** (19:30–21:00)\n'
+                        f'ลงทะเบียนแล้ว: **{reg_count} คน**{gw_link}\n'
+                        f'@everyone มาเข้า Voice กันเลย!'
+                    )
+                except Exception:
+                    pass
+
+    # ── Probation + Milestone checks (hourly) ──
+    today_str = now.strftime('%Y-%m-%d')
+    for gid_str, members_map in list(new_members.items()):
+        guild_obj = None
+        try:
+            guild_obj = client.get_guild(int(gid_str))
+        except Exception:
+            pass
+
+        for uid, entry in list(members_map.items()):
+            try:
+                joined = datetime.fromisoformat(entry['joined_at'])
+            except Exception:
+                continue
+            days_since = (now - joined).days
+
+            # Milestone: เข้า Discord ครบ 3 วันแรก
+            if not entry.get('milestone_3d') and days_since >= 3:
+                dates_map = user_daily.get(gid_str, {}).get(uid, {}).get('dates', {})
+                if len(dates_map) >= 3:
+                    with _lock_new_members:
+                        new_members[gid_str][uid]['milestone_3d'] = True
+                        save_new_members()
+                    await _check_new_member_milestone(gid_str, uid, entry.get('name', uid), 'milestone_3d')
+
+            # First GW registration milestone
+            if not entry.get('first_gw_reg') and uid in gw_registered.get(gid_str, []):
+                with _lock_new_members:
+                    new_members[gid_str][uid]['first_gw_reg'] = True
+                    save_new_members()
+                await _check_new_member_milestone(gid_str, uid, entry.get('name', uid), 'first_gw_reg')
+
+            # Probation warning: ≤30 days old, PROBATION_DAYS passed, zero points
+            if (not entry.get('probation_warned') and
+                    PROBATION_DAYS <= days_since <= 30):
+                pts_data = guild_points.get(gid_str, {}).get(uid, {})
+                total = sum(
+                    v.get('gw', 0) + v.get('other', 0) + v.get('reg', 0)
+                    for v in pts_data.values()
+                )
+                if total == 0:
+                    with _lock_new_members:
+                        new_members[gid_str][uid]['probation_warned'] = True
+                        save_new_members()
+                    ch = get_guild_ch(int(gid_str), 'stats') if guild_obj else None
+                    if ch:
+                        try:
+                            await ch.send(
+                                f'⚠️ **Probation Alert** — {entry.get("name", uid)}\n'
+                                f'เข้ากิลมา **{days_since} วัน** แต่ยังไม่มีคะแนนเลย\n'
+                                f'Officer: กรุณาทัก DM เพื่อดึงให้มา active'
+                            )
+                        except Exception:
+                            pass
+
+            # Inactivity DM: สมาชิกเก่า (> 30 days) ไม่ active 14 วัน
+            if days_since > 30 and not entry.get('inactivity_dm_sent'):
+                last_seen_str = user_daily.get(gid_str, {}).get(uid, {}).get('last_seen')
+                if last_seen_str:
+                    try:
+                        last_seen = datetime.fromisoformat(last_seen_str)
+                        inactive_days = (now - last_seen).days
+                        if inactive_days >= 14:
+                            member_obj = guild_obj.get_member(int(uid)) if guild_obj else None
+                            if member_obj:
+                                await _send_inactivity_dm(member_obj, inactive_days)
+                            with _lock_new_members:
+                                new_members[gid_str][uid]['inactivity_dm_sent'] = True
+                                save_new_members()
+                    except Exception:
+                        pass
+
+            # Expire entries older than 60 days to keep file small
+            if days_since > 60:
+                with _lock_new_members:
+                    new_members.get(gid_str, {}).pop(uid, None)
+                    save_new_members()
+
+
+# ── Scheduled: Weekly leaderboard ping (Monday 09:00) ────────────────────────
+_leaderboard_ping_sent: dict[str, str] = {}  # {gid: date_str}
+
+@tasks.loop(hours=1)
+async def weekly_leaderboard_ping():
+    now = datetime.now(THAI_TZ)
+    # Monday, 09:00
+    if not (now.weekday() == 0 and now.hour == 9):
+        return
+    week_key = now.strftime('%Y-W%W')
+    for guild in client.guilds:
+        gid = str(guild.id)
+        if _leaderboard_ping_sent.get(gid) == week_key:
+            continue
+        if not get_gc(guild.id, 'leaderboard_ping', True):
+            continue
+        ch = get_guild_ch(guild.id, 'stats')
+        if not ch:
+            continue
+        # Compute last week points: Monday→Sunday
+        last_monday = now - timedelta(days=7)
+        pts_data = guild_points.get(gid, {})
+        totals: list[tuple[str, str, int]] = []
+        for uid, day_map in pts_data.items():
+            pts = sum(
+                v.get('gw', 0) + v.get('other', 0) + v.get('reg', 0)
+                for date_str, v in day_map.items()
+                if last_monday.date() <= datetime.strptime(date_str, '%Y-%m-%d').date() <= now.date()
+            )
+            if pts > 0:
+                name = next((v['name'] for v in day_map.values() if v.get('name')), uid)
+                totals.append((uid, name, pts))
+        totals.sort(key=lambda x: -x[2])
+        top5 = totals[:5]
+        if not top5:
+            continue
+        medals = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
+        lines = ['⚔️ **สรุปคะแนนกิลสัปดาห์ที่ผ่านมา**\n']
+        for i, (_, name, pts) in enumerate(top5):
+            lines.append(f'{medals[i]} **{name}** — {pts} คะแนน')
+        lines.append('\nอย่าลืมเข้า Voice และลงทะเบียน GW สัปดาห์นี้ด้วย!')
+        try:
+            await ch.send('\n'.join(lines))
+            _leaderboard_ping_sent[gid] = week_key
+        except Exception as e:
+            log(f'weekly_leaderboard_ping error {gid}: {e}')
+
 
 # ── Feature 2: Welcome message เมื่อ bot เข้า server ใหม่ ─────────────────────
 @client.event
@@ -3430,6 +3754,101 @@ def api_points():
         r['rank'] = i
 
     return jsonify({'ok': True, 'period': period, 'rows': rows})
+
+
+@flask_app.route('/api/new-members')
+@require_auth
+def api_new_members():
+    """
+    GET ?guild_id=X&days=30
+    Returns new members with their checklist progress and probation status.
+    """
+    guild_id, err = _guild_id_or_error()
+    if err:
+        return err
+    gid = str(guild_id)
+    try:
+        days = int(request.args.get('days', 30))
+    except ValueError:
+        days = 30
+    now = datetime.now(THAI_TZ)
+    out = []
+    for uid, entry in new_members.get(gid, {}).items():
+        try:
+            joined = datetime.fromisoformat(entry['joined_at'])
+        except Exception:
+            continue
+        days_since = (now - joined).days
+        if days_since > days:
+            continue
+        pts = sum(
+            v.get('gw', 0) + v.get('other', 0) + v.get('reg', 0)
+            for v in guild_points.get(gid, {}).get(uid, {}).values()
+        )
+        is_probation = (days_since >= PROBATION_DAYS and pts == 0)
+        buddy_info = buddy_pairs.get(gid, {}).get(uid)
+        out.append({
+            'uid': uid,
+            'name': entry.get('name', uid),
+            'joined_at': entry.get('joined_at'),
+            'days_since': days_since,
+            'welcome_sent': entry.get('welcome_sent', False),
+            'first_voice': entry.get('first_voice', False),
+            'first_gw_reg': entry.get('first_gw_reg', False),
+            'milestone_3d': entry.get('milestone_3d', False),
+            'total_points': pts,
+            'is_probation': is_probation,
+            'buddy': buddy_info,
+        })
+    out.sort(key=lambda x: x['days_since'])
+    return jsonify({'ok': True, 'members': out})
+
+
+@flask_app.route('/api/buddy', methods=['GET', 'POST', 'DELETE'])
+@require_auth
+def api_buddy():
+    """
+    GET ?guild_id=X  → all buddy pairs
+    POST {guild_id, new_uid, mentor_uid, new_name, mentor_name}  → assign buddy
+    DELETE {guild_id, new_uid}  → remove pair
+    """
+    if request.method == 'GET':
+        guild_id, err = _guild_id_or_error()
+        if err:
+            return err
+        gid = str(guild_id)
+        with _lock_buddy_pairs:
+            pairs = [
+                {'new_uid': k, **v}
+                for k, v in buddy_pairs.get(gid, {}).items()
+            ]
+        return jsonify({'ok': True, 'pairs': pairs})
+
+    data = request.get_json(silent=True) or {}
+    gid  = str(data.get('guild_id', ''))
+    if not gid:
+        return jsonify({'ok': False, 'error': 'guild_id required'}), 400
+
+    if request.method == 'POST':
+        new_uid     = str(data.get('new_uid', '')).strip()
+        mentor_uid  = str(data.get('mentor_uid', '')).strip()
+        if not new_uid or not mentor_uid:
+            return jsonify({'ok': False, 'error': 'new_uid and mentor_uid required'}), 400
+        with _lock_buddy_pairs:
+            buddy_pairs.setdefault(gid, {})[new_uid] = {
+                'mentor_uid':   mentor_uid,
+                'mentor_name':  str(data.get('mentor_name', mentor_uid)),
+                'new_name':     str(data.get('new_name', new_uid)),
+                'since':        datetime.now(THAI_TZ).isoformat(),
+            }
+            save_buddy_pairs()
+        return jsonify({'ok': True, 'action': 'assigned'})
+    else:  # DELETE
+        new_uid = str(data.get('new_uid', '')).strip()
+        with _lock_buddy_pairs:
+            buddy_pairs.get(gid, {}).pop(new_uid, None)
+            save_buddy_pairs()
+        return jsonify({'ok': True, 'action': 'removed'})
 
 
 @flask_app.route('/api/points/registered', methods=['GET', 'POST', 'DELETE'])
